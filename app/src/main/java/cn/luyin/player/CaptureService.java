@@ -16,6 +16,8 @@ import java.util.*;
 public final class CaptureService extends Service {
     public static final String START="capture.start",PAUSE="capture.pause",RESUME="capture.resume",FINISH="capture.finish";
     public static volatile boolean running=false;
+    private static final WaveformBuffer waveform=new WaveformBuffer(120);
+    public static float[] waveformSamples(){return waveform.snapshot();}
     private static final String CHANNEL="long_recording";
     private static final int NOTIFICATION=2001;
     private MediaRecorder recorder;
@@ -25,6 +27,7 @@ public final class CaptureService extends Service {
     private Library library;
     private boolean finishing;
     private final Handler handler=new Handler(Looper.getMainLooper());
+    private final Runnable sampleAmplitude=new Runnable(){public void run(){if(recorder!=null&&journal!=null&&journal.active!=null){try{waveform.add(recorder.getMaxAmplitude());}catch(IllegalStateException ignored){}handler.postDelayed(this,100);}}};
     private final Runnable renewWakeLock=new Runnable(){public void run(){if(recorder!=null&&journal!=null&&journal.active!=null){wakeLock.acquire(10*60*1000L);handler.postDelayed(this,60*1000L);}}};
 
     @Override public void onCreate(){
@@ -43,6 +46,7 @@ public final class CaptureService extends Service {
                 if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)throw new SecurityException("未获得麦克风权限");
                 recoverSavedSession(this);
                 journal=new CaptureJournal();journal.title=new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+" 长录音";
+                waveform.clear();
                 journal.write(this);
                 if(Build.VERSION.SDK_INT>=30)startForeground(NOTIFICATION,notification(),ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
                 else startForeground(NOTIFICATION,notification());
@@ -90,7 +94,7 @@ public final class CaptureService extends Service {
             recorder.setOnInfoListener((mr,what,extra)->{
                 if(mr==recorder&&what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED&&!finishing){try{closeSegment();startSegment();}catch(Exception e){try{finishSession("自动分段失败，已保存可用片段");}catch(Exception ignored){stopSelf();}}}
             });
-            recorder.prepare();recorder.start();journal.activeSince=SystemClock.elapsedRealtime();journal.write(this);wakeLock.acquire(10*60*1000L);handler.postDelayed(renewWakeLock,60*1000L);updateNotification();
+            recorder.prepare();recorder.start();journal.activeSince=SystemClock.elapsedRealtime();journal.write(this);wakeLock.acquire(10*60*1000L);handler.postDelayed(renewWakeLock,60*1000L);handler.post(sampleAmplitude);updateNotification();
         }catch(Exception e){releaseRecorder();try{getContentResolver().delete(uri,null,null);}catch(Exception ignored){}journal.ledger.complete(false);journal.active=null;journal.activeSince=0;journal.state="paused";journal.write(this);throw e;}
     }
     private void closeSegment() throws Exception {
@@ -143,6 +147,7 @@ public final class CaptureService extends Service {
         s.ledger.finish();s.state="finished";s.message="上次录音意外中断，已恢复 "+available.size()+" 个有效片段";s.write(context);return s.message;
     }
     private void releaseRecorder(){
+        handler.removeCallbacks(sampleAmplitude);
         handler.removeCallbacks(renewWakeLock);
         if(recorder!=null){try{recorder.release();}catch(Exception ignored){}recorder=null;}
         if(descriptor!=null){try{descriptor.close();}catch(Exception ignored){}descriptor=null;}
@@ -151,7 +156,7 @@ public final class CaptureService extends Service {
     private PendingIntent command(String action){return PendingIntent.getService(this,action.hashCode(),new Intent(this,CaptureService.class).setAction(action),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);}
     private Notification notification(){
         boolean recording=journal!=null&&journal.state.equals("recording");
-        PendingIntent open=PendingIntent.getActivity(this,1,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent open=PendingIntent.getActivity(this,1,new Intent(this,MainActivity.class).putExtra("page","studio"),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this,CHANNEL).setSmallIcon(R.drawable.ic_app).setContentTitle(recording?"长录音正在录制":"长录音已暂停")
             .setContentText("已保存 "+(journal==null?0:journal.rows.size())+" 段 · "+(recording?"暂停即保存当前段":"继续将新建片段"))
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)

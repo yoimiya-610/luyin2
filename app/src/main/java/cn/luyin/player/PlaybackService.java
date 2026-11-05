@@ -32,7 +32,7 @@ public final class PlaybackService extends MediaSessionService {
                 if(player.hasNextMediaItem()){player.seekToNextMediaItem();player.prepare();player.play();}
             }
         });
-        PendingIntent intent=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+        PendingIntent intent=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class).putExtra("page","player"),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         session=new MediaSession.Builder(this,player).setSessionActivity(intent).build();
         handler.post(checkpoint);
     }

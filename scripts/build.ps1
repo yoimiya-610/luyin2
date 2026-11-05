@@ -16,7 +16,7 @@ if (-not (Test-Path "$projectRoot\.toolchain\debug.keystore")) {
     & "$env:JAVA_HOME\bin\keytool.exe" -genkeypair -keystore "$projectRoot\.toolchain\debug.keystore" -storepass android -keypass android -alias androiddebugkey -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
     if ($LASTEXITCODE -ne 0) { throw '生成调试签名失败' }
 }
-& "$projectRoot\.toolchain\gradle-8.11.1\bin\gradle.bat" --no-daemon assembleDebug lintDebug
+& "$projectRoot\.toolchain\gradle-8.11.1\bin\gradle.bat" --no-daemon assembleDebug lintDebug testDebugUnitTest
 if ($LASTEXITCODE -ne 0) { throw 'Android 构建或检查失败' }
 New-Item -ItemType Directory -Force "$projectRoot\output" | Out-Null
 Copy-Item -LiteralPath "$projectRoot\app\build\outputs\apk\debug\app-debug.apk" -Destination "$projectRoot\output\录音随听.apk" -Force
