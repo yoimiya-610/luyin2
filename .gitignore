@@ -1,0 +1,9 @@
+.toolchain/
+.gradle/
+local.properties
+**/build/
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
