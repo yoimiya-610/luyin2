@@ -28,12 +28,15 @@ public final class MainActivity extends Activity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Handler handler=new Handler(Looper.getMainLooper());
     private Library library;
+    private FolderStore folders;
+    private Button folderSelector,formatButton;
+    private String folderId=FolderStore.ALL;
     private List<Recording> catalog=new ArrayList<>(),queue=new ArrayList<>(),visibleCatalog=new ArrayList<>();
     private List<Preset> savedPresets=new ArrayList<>();
     private final LinkedHashSet<String> selected=new LinkedHashSet<>();
     private MediaController player;
     private ListenableFuture<MediaController> future;
-    private TextView status,now,clock,selection,pageTitle,pageSubtitle,miniTitle,miniSubtitle;
+    private TextView status,now,clock,selection,pageTitle,miniTitle,miniSubtitle;
     private TextView captureSummary,captureDetail,studioTimer,studioPhase,studioName,studioCount,studioTotal;
     private TextView exportBanner;
     private Button play,repeat,captureToggle,captureFinish,miniPlay;
@@ -53,13 +56,14 @@ public final class MainActivity extends Activity {
     private String pendingRenameTitle;
     private String category="全部",treeSource=SourceRules.RECORDER;
     private boolean queueView=false,scanning=false,dragging=false,destroyed=false,exporting=false;
+    private boolean deleting=false;
     private final Runnable refresh=()->scan();
     private final android.database.ContentObserver observer=new android.database.ContentObserver(handler){@Override public void onChange(boolean selfChange){handler.removeCallbacks(refresh);handler.postDelayed(refresh,1200);}};
     private final Runnable ticker=new Runnable(){public void run(){updatePlayer();updateCapture();updateExport();handler.postDelayed(this,250);}};
 
     @Override public void onCreate(Bundle state){
-        super.onCreate(state);library=new Library(this);catalog=library.load("catalog");queue=library.load("queue");ExportJob.restoreInterrupted(this);
-        if(state!=null){treeSource=state.getString("treeSource",SourceRules.RECORDER);category=state.getString("category","全部");page=state.getInt("page",state.getBoolean("queueView")?PLAYER:LIBRARY);ArrayList<String> saved=state.getStringArrayList("selected");if(saved!=null)selected.addAll(saved);}
+        super.onCreate(state);library=new Library(this);folders=new FolderStore(this);catalog=library.load("catalog");queue=library.load("queue");ExportJob.restoreInterrupted(this);
+        if(state!=null){folderId=state.getString("folderId",FolderStore.ALL);treeSource=state.getString("treeSource",SourceRules.RECORDER);category=state.getString("category","全部");page=state.getInt("page",state.getBoolean("queueView")?PLAYER:LIBRARY);ArrayList<String> saved=state.getStringArrayList("selected");if(saved!=null)selected.addAll(saved);}
         if(state==null&&"studio".equals(getIntent().getStringExtra("page")))page=STUDIO;
         if(state==null&&"player".equals(getIntent().getStringExtra("page")))page=PLAYER;
         getIntent().removeExtra("page");
@@ -93,52 +97,53 @@ public final class MainActivity extends Activity {
     private void buildUi(){
         LinearLayout root=column();root.setBackgroundColor(BG);setContentView(root);
         root.setOnApplyWindowInsetsListener((v,insets)->{int top,bottom;if(Build.VERSION.SDK_INT>=30){android.graphics.Insets b=insets.getInsets(WindowInsets.Type.systemBars());top=b.top;bottom=b.bottom;}else{top=insets.getSystemWindowInsetTop();bottom=insets.getSystemWindowInsetBottom();}v.setPadding(0,top,0,bottom);return insets;});
-        LinearLayout header=line();header.setPadding(dp(20),dp(8),dp(12),dp(12));LinearLayout titles=column();TextView brand=text("录音随听  /  LOCAL AUDIO",10,TEAL);brand.setLetterSpacing(.1f);titles.addView(brand);gap(titles,5);pageTitle=bold("录音库",28,INK);titles.addView(pageTitle);pageSubtitle=text("整理声音，按你的顺序听。",12,MUTED);gap(titles,4);titles.addView(pageSubtitle);header.addView(titles,new LinearLayout.LayoutParams(0,-2,1));header.addView(iconButton(IconView.MORE,"当前页面选项",this::pageMenu));root.addView(header);
+        LinearLayout header=line();header.setPadding(dp(20),dp(10),dp(12),dp(10));pageTitle=bold("录音库",26,INK);header.addView(pageTitle,new LinearLayout.LayoutParams(0,dp(52),1));header.addView(iconButton(IconView.MORE,"当前页面选项",this::pageMenu));root.addView(header);
         exportBanner=text("",12,TEAL);exportBanner.setPadding(dp(20),dp(8),dp(20),dp(8));exportBanner.setBackgroundColor(0xffe7f0e4);exportBanner.setVisibility(View.GONE);root.addView(exportBanner);
         FrameLayout content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(-1,0,1));
         pages[LIBRARY]=buildLibraryPage();pages[STUDIO]=buildStudioPage();pages[PLAYER]=buildPlayerPage();pages[PRESETS]=buildPresetPage();for(View v:pages)content.addView(v,new FrameLayout.LayoutParams(-1,-1));
         miniPlayer=line();miniPlayer.setPadding(dp(20),dp(8),dp(16),dp(8));surface(miniPlayer,Color.WHITE,0);
-        IconView miniIcon=new IconView(this,IconView.WAVE,TEAL);miniPlayer.addView(miniIcon,new LinearLayout.LayoutParams(dp(24),dp(30)));LinearLayout miniInfo=column();miniInfo.setPadding(dp(14),0,dp(8),0);miniTitle=bold("选几段录音，开始随听",13,INK);miniTitle.setSingleLine(true);miniTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);miniInfo.addView(miniTitle);miniSubtitle=text("点击打开播放器",11,MUTED);miniInfo.addView(miniSubtitle);miniInfo.setOnClickListener(v->showPage(PLAYER));miniPlayer.addView(miniInfo,new LinearLayout.LayoutParams(0,-2,1));miniPlay=button("播放",this::togglePlay);miniPlayer.addView(miniPlay,new LinearLayout.LayoutParams(dp(64),dp(48)));root.addView(miniPlayer);
-        LinearLayout nav=line();nav.setPadding(dp(8),dp(4),dp(8),dp(3));nav.setBackgroundColor(Color.WHITE);String[] labels={"录音库","录音室","播放","预设"};int[] icons={IconView.LIBRARY,IconView.MIC,IconView.PLAY,IconView.PRESETS};
-        for(int i=0;i<4;i++){final int target=i;LinearLayout item=column();item.setGravity(Gravity.CENTER);navIcons[i]=new IconView(this,icons[i],MUTED);item.addView(navIcons[i],new LinearLayout.LayoutParams(dp(23),dp(23)));gap(item,3);navLabels[i]=text(labels[i],11,MUTED);item.addView(navLabels[i]);item.setContentDescription(labels[i]+"页面");item.setFocusable(true);item.setOnClickListener(v->showPage(target));navItems[i]=item;nav.addView(item,new LinearLayout.LayoutParams(0,dp(58),1));}root.addView(nav);
+        IconView miniIcon=new IconView(this,IconView.WAVE,TEAL);miniPlayer.addView(miniIcon,new LinearLayout.LayoutParams(dp(24),dp(30)));LinearLayout miniInfo=column();miniInfo.setPadding(dp(14),0,dp(8),0);miniTitle=bold("未播放",13,INK);miniTitle.setSingleLine(true);miniTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);miniInfo.addView(miniTitle);miniSubtitle=text("",11,MUTED);miniInfo.addView(miniSubtitle);miniInfo.setOnClickListener(v->showPage(PLAYER));miniPlayer.addView(miniInfo,new LinearLayout.LayoutParams(0,-2,1));miniPlay=button("播放",this::togglePlay);miniPlayer.addView(miniPlay,new LinearLayout.LayoutParams(dp(64),dp(48)));root.addView(miniPlayer);
+        LinearLayout nav=line();nav.setBaselineAligned(false);nav.setPadding(dp(8),dp(4),dp(8),dp(3));nav.setBackgroundColor(Color.WHITE);String[] labels={"录音库","录音室","播放","预设"};int[] icons={IconView.LIBRARY,IconView.MIC,IconView.PLAY,IconView.PRESETS};
+        for(int i=0;i<4;i++){final int target=i;LinearLayout item=column();item.setBaselineAligned(false);item.setMinimumHeight(dp(58));item.setGravity(Gravity.CENTER);navIcons[i]=new IconView(this,icons[i],MUTED);item.addView(navIcons[i],new LinearLayout.LayoutParams(dp(23),dp(23)));gap(item,3);navLabels[i]=text(labels[i],11,MUTED);navLabels[i].setGravity(Gravity.CENTER);navLabels[i].setSingleLine(true);navLabels[i].setIncludeFontPadding(false);item.addView(navLabels[i],new LinearLayout.LayoutParams(-1,-2));item.setContentDescription(labels[i]+"页面");item.setFocusable(true);item.setOnClickListener(v->showPage(target));navItems[i]=item;nav.addView(item,new LinearLayout.LayoutParams(0,-2,1));}root.addView(nav);
     }
     private View buildLibraryPage(){
-        LinearLayout body=padded();LinearLayout heading=line();status=text("正在整理本地录音…",12,MUTED);heading.addView(status,new LinearLayout.LayoutParams(0,-2,1));heading.addView(button("＋ 导入",this::chooseFiles));body.addView(heading);gap(body,12);
+        LinearLayout body=padded();LinearLayout heading=line();status=text("扫描中",12,MUTED);heading.addView(status,new LinearLayout.LayoutParams(0,-2,1));heading.addView(button("＋ 导入",this::chooseFiles));body.addView(heading);gap(body,10);
         search=new EditText(this);search.setSingleLine(true);search.setTextSize(14);search.setHint("搜索录音名称");search.setPadding(dp(16),0,dp(16),0);surface(search,Color.WHITE,16);body.addView(search,new LinearLayout.LayoutParams(-1,dp(48)));
         search.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){renderRows();}public void afterTextChanged(android.text.Editable s){}});
-        gap(body,12);HorizontalScrollView horizontal=new HorizontalScrollView(this);horizontal.setHorizontalScrollBarEnabled(false);filters=line();for(String c:new String[]{"全部",SourceRules.APP,SourceRules.RECORDER,SourceRules.CALL,SourceRules.OTHER}){Button chip=button(c,()->{category=c;renderRows();});chip.setTag(c);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(40));p.rightMargin=dp(6);filters.addView(chip,p);}horizontal.addView(filters);body.addView(horizontal);
+        gap(body,10);LinearLayout folderRow=line();folderSelector=button("全部文件夹 ▾",this::showFolderPicker);folderRow.addView(folderSelector,new LinearLayout.LayoutParams(0,dp(48),1));folderRow.addView(button("＋ 文件夹",()->createFolder(null)));body.addView(folderRow);gap(body,8);HorizontalScrollView horizontal=new HorizontalScrollView(this);horizontal.setHorizontalScrollBarEnabled(false);filters=line();for(String c:new String[]{"全部",SourceRules.APP,SourceRules.RECORDER,SourceRules.CALL,SourceRules.OTHER}){Button chip=button(c,()->{category=c;renderRows();});chip.setTag(c);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(40));p.rightMargin=dp(6);filters.addView(chip,p);}horizontal.addView(filters);body.addView(horizontal);
         selectionBar=line();selection=text("",12,TEAL);selectionBar.addView(selection,new LinearLayout.LayoutParams(0,-2,1));selectionBar.addView(button("选项",this::showActions));body.addView(selectionBar);
-        ListView list=list();libraryAdapter=new RecordingAdapter(false);list.setAdapter(libraryAdapter);body.addView(emptyList(list,"声音，从这里开始","点右上角选项扫描或授权录音文件夹，\n也可以导入音频，或前往录音室开始录制。"),new LinearLayout.LayoutParams(-1,0,1));return body;
+        ListView list=list();libraryAdapter=new RecordingAdapter(false);list.setAdapter(libraryAdapter);body.addView(emptyList(list,"暂无录音",""),new LinearLayout.LayoutParams(-1,0,1));return body;
     }
     private View buildStudioPage(){
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);LinearLayout body=padded();body.setPadding(dp(20),dp(4),dp(20),dp(24));scroll.addView(body);
         LinearLayout hero=column();hero.setPadding(dp(20),dp(18),dp(20),dp(16));surface(hero,FOREST,28);
-        studioPhase=text("准备就绪",12,MINT);hero.addView(studioPhase);gap(hero,12);studioTimer=bold("00:00",42,Color.WHITE);studioTimer.setGravity(Gravity.CENTER);hero.addView(studioTimer);studioName=text("开始一段新的声音记录",12,0xffa7c5b6);studioName.setGravity(Gravity.CENTER);hero.addView(studioName);
-        gap(hero,10);waveformView=new WaveformView(this);hero.addView(waveformView,new LinearLayout.LayoutParams(-1,dp(112)));gap(hero,4);TextView waveHint=text("实时声音波形  ·  最近 12 秒有效录音",10,0xff96b4a8);waveHint.setGravity(Gravity.CENTER);hero.addView(waveHint);body.addView(hero);
-        gap(body,16);LinearLayout stats=line();studioCount=bold("0 段已保存",14,INK);studioTotal=text("累计 00:00",13,MUTED);stats.addView(studioCount,new LinearLayout.LayoutParams(0,-2,1));stats.addView(studioTotal);body.addView(stats);gap(body,12);
-        captureSummary=text("暂停即保存一段，结束自动生成预设队列。",12,TEAL);captureSummary.setLineSpacing(dp(3),1);body.addView(captureSummary);captureDetail=text("",12,MUTED);captureDetail.setLineSpacing(dp(3),1);body.addView(captureDetail);gap(body,16);
+        studioPhase=text("准备就绪",12,MINT);hero.addView(studioPhase);gap(hero,12);studioTimer=bold("00:00",42,Color.WHITE);studioTimer.setGravity(Gravity.CENTER);hero.addView(studioTimer);studioName=text("未录音",12,0xffa7c5b6);studioName.setGravity(Gravity.CENTER);hero.addView(studioName);
+        gap(hero,10);waveformView=new WaveformView(this);hero.addView(waveformView,new LinearLayout.LayoutParams(-1,dp(112)));gap(hero,4);TextView waveHint=text("实时波形",10,0xff96b4a8);waveHint.setGravity(Gravity.CENTER);hero.addView(waveHint);body.addView(hero);
+        gap(body,12);LinearLayout formatRow=line();formatRow.addView(text("录音格式",13,INK),new LinearLayout.LayoutParams(0,-2,1));formatButton=button(CaptureFormat.M4A.label,this::chooseCaptureFormat);formatRow.addView(formatButton);body.addView(formatRow);gap(body,12);LinearLayout stats=line();studioCount=bold("0 段已保存",14,INK);studioTotal=text("累计 00:00",13,MUTED);stats.addView(studioCount,new LinearLayout.LayoutParams(0,-2,1));stats.addView(studioTotal);body.addView(stats);gap(body,12);
+        captureSummary=text("",12,TEAL);captureSummary.setLineSpacing(dp(3),1);body.addView(captureSummary);captureDetail=text("",12,MUTED);captureDetail.setLineSpacing(dp(3),1);body.addView(captureDetail);gap(body,16);
         captureToggle=primary("开始长录音",this::toggleCapture);body.addView(captureToggle,new LinearLayout.LayoutParams(-1,dp(60)));gap(body,10);captureFinish=button("结束并保存整组队列",this::confirmFinish);body.addView(captureFinish,new LinearLayout.LayoutParams(-1,dp(48)));gap(body,24);
         LinearLayout section=line();section.addView(bold("本次录音片段",17,INK),new LinearLayout.LayoutParams(0,-2,1));section.addView(iconButton(IconView.EXPORT,"导出本次已保存片段",()->{CaptureJournal s=CaptureJournal.read(this);if(s!=null)beginExport(s.rows);else toast("还没有已保存的片段");}));body.addView(section);studioClips=column();body.addView(studioClips);return scroll;
     }
     private View buildPlayerPage(){
         LinearLayout body=padded();ListView list=list();LinearLayout header=column();
         LinearLayout hero=column();hero.setPadding(dp(22),dp(22),dp(22),dp(20));surface(hero,Color.WHITE,26);
-        LinearLayout caption=line();caption.addView(text("正在播放",11,TEAL),new LinearLayout.LayoutParams(0,-2,1));repeat=button("顺序播放",()->{if(player!=null){player.setRepeatMode(player.getRepeatMode()==Player.REPEAT_MODE_ONE?Player.REPEAT_MODE_OFF:Player.REPEAT_MODE_ONE);updatePlayer();}});caption.addView(repeat);hero.addView(caption);gap(hero,16);
-        now=bold("选几段录音，开始随听",23,INK);now.setMaxLines(3);hero.addView(now);gap(hero,18);seek=new SeekBar(this);seek.setMax(1000);seek.setProgressTintList(ColorStateList.valueOf(TEAL));hero.addView(seek,new LinearLayout.LayoutParams(-1,dp(36)));
+        LinearLayout caption=line();caption.addView(text("正在播放",11,TEAL),new LinearLayout.LayoutParams(0,-2,1));repeat=button("顺序播放",this::choosePlaybackMode);caption.addView(repeat);hero.addView(caption);gap(hero,16);
+        now=bold("未播放",23,INK);now.setMaxLines(3);hero.addView(now);gap(hero,18);seek=new SeekBar(this);seek.setMax(1000);seek.setProgressTintList(ColorStateList.valueOf(TEAL));hero.addView(seek,new LinearLayout.LayoutParams(-1,dp(36)));
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onStartTrackingTouch(SeekBar b){dragging=true;}public void onStopTrackingTouch(SeekBar b){if(player!=null&&player.getDuration()>0)player.seekTo(player.getDuration()*b.getProgress()/1000);dragging=false;}public void onProgressChanged(SeekBar b,int p,boolean from){}});
         clock=text("00:00 / 00:00",12,MUTED);hero.addView(clock);gap(hero,14);LinearLayout controls=line();controls.setGravity(Gravity.CENTER);controls.addView(iconButton(IconView.PREVIOUS,"上一首",()->{if(player!=null)player.seekToPreviousMediaItem();}));play=primary("播放",this::togglePlay);LinearLayout.LayoutParams playP=new LinearLayout.LayoutParams(dp(120),dp(56));playP.setMargins(dp(20),0,dp(20),0);controls.addView(play,playP);controls.addView(iconButton(IconView.NEXT,"下一首",()->{if(player!=null)player.seekToNextMediaItem();}));hero.addView(controls);header.addView(hero);gap(header,16);
-        LinearLayout section=line();section.addView(bold("接下来播放",17,INK),new LinearLayout.LayoutParams(0,-2,1));section.addView(button("管理队列",this::showActions));header.addView(section);TextView hint=text("点片段播放，点更多调整顺序或导出。",12,MUTED);header.addView(hint);gap(header,8);
+        LinearLayout section=line();section.addView(bold("播放队列",17,INK),new LinearLayout.LayoutParams(0,-2,1));section.addView(button("管理队列",this::showActions));header.addView(section);gap(header,8);
         list.addHeaderView(header,null,false);queueAdapter=new RecordingAdapter(true);list.setAdapter(queueAdapter);body.addView(list,new LinearLayout.LayoutParams(-1,-1));return body;
     }
     private View buildPresetPage(){
-        LinearLayout body=padded();LinearLayout intro=line();TextView note=text("把常听的顺序，留给下一次。",12,MUTED);intro.addView(note,new LinearLayout.LayoutParams(0,-2,1));intro.addView(button("＋ 保存当前",this::saveQueuePreset));body.addView(intro);gap(body,12);
-        ListView list=list();presetAdapter=new PresetAdapter();list.setAdapter(presetAdapter);body.addView(emptyList(list,"留下一组声音","结束长录音会自动保存整组片段，\n也可以把当前播放队列保存为预设。"),new LinearLayout.LayoutParams(-1,0,1));return body;
+        LinearLayout body=padded();LinearLayout intro=line();TextView note=text("",12,MUTED);intro.addView(note,new LinearLayout.LayoutParams(0,-2,1));intro.addView(button("＋ 保存当前",this::saveQueuePreset));body.addView(intro);gap(body,12);
+        ListView list=list();presetAdapter=new PresetAdapter();list.setAdapter(presetAdapter);body.addView(emptyList(list,"暂无预设",""),new LinearLayout.LayoutParams(-1,0,1));return body;
     }
     private void showPage(int target){page=Math.max(LIBRARY,Math.min(PRESETS,target));queueView=page==PLAYER;if(page!=LIBRARY){search.clearFocus();android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);if(keyboard!=null)keyboard.hideSoftInputFromWindow(search.getWindowToken(),0);}render();if(page==STUDIO)updateCapture();}
     private void pageMenu(){
-        if(page==LIBRARY)new AlertDialog.Builder(this).setTitle("录音库").setItems(new String[]{"扫描本地录音","授权录音文件夹","导入音频","选择与排序","使用帮助"},(d,w)->{if(w==0)requestScan();else if(w==1)chooseTree();else if(w==2)chooseFiles();else if(w==3)showActions();else help();}).show();
-        else if(page==PLAYER)showActions();else if(page==PRESETS)new AlertDialog.Builder(this).setItems(new String[]{"保存当前播放队列","使用帮助"},(d,w)->{if(w==0)saveQueuePreset();else help();}).show();else help();
+        if(page==LIBRARY)new AlertDialog.Builder(this).setTitle("录音库").setItems(new String[]{"扫描本地录音","授权录音文件夹","导入音频","选择与排序","管理文件夹","恢复移出软件的录音","使用帮助"},(d,w)->{if(w==0)requestScan();else if(w==1)chooseTree();else if(w==2)chooseFiles();else if(w==3)showActions();else if(w==4)manageFolders();else if(w==5){library.restoreHidden();scan();}else help();}).show();
+        else if(page==PLAYER)showActions();else if(page==PRESETS)new AlertDialog.Builder(this).setItems(new String[]{"保存当前播放队列","使用帮助"},(d,w)->{if(w==0)saveQueuePreset();else help();}).show();else new AlertDialog.Builder(this).setItems(new String[]{"录音格式","使用帮助"},(d,w)->{if(w==0)chooseCaptureFormat();else help();}).show();
     }
+
     private void connect(){
         future=new MediaController.Builder(this,new SessionToken(this,new ComponentName(this,PlaybackService.class))).buildAsync();
         future.addListener(()->{try{player=future.get();if(destroyed)return;player.addListener(new Player.Listener(){
@@ -147,8 +152,8 @@ public final class MainActivity extends Activity {
         });updatePlayer();}catch(Exception e){toast("播放器连接失败，请重开应用");}},getMainExecutor());
     }
     private void updatePlayer(){if(player==null||destroyed)return;
-        MediaItem item=player.getCurrentMediaItem();now.setText(item==null?"选几段录音，开始随听":item.mediaMetadata.title);
-        play.setText(player.isPlaying()?"暂停":"播放");miniPlay.setText(player.isPlaying()?"暂停":"播放");miniTitle.setText(item==null?"选几段录音，开始随听":item.mediaMetadata.title);miniSubtitle.setText(item==null?"点击打开播放器":player.isPlaying()?"正在播放 · 点击查看队列":"已暂停 · 点击查看队列");repeat.setText(player.getRepeatMode()==Player.REPEAT_MODE_ONE?"单曲循环 ✓":"顺序播放");
+        MediaItem item=player.getCurrentMediaItem();now.setText(item==null?"未播放":item.mediaMetadata.title);
+        play.setText(player.isPlaying()?"暂停":"播放");miniPlay.setText(player.isPlaying()?"暂停":"播放");miniTitle.setText(item==null?"未播放":item.mediaMetadata.title);miniSubtitle.setText(item==null?"":player.isPlaying()?"播放中":"已暂停");repeat.setText(player.getRepeatMode()==Player.REPEAT_MODE_ONE?"单曲循环":player.getShuffleModeEnabled()?"乱序播放":"顺序播放");
         long duration=Math.max(0,player.getDuration()),position=Math.max(0,player.getCurrentPosition());clock.setText(time(position)+" / "+time(duration));
         seek.setEnabled(duration>0);if(!dragging)seek.setProgress(duration>0?(int)(position*1000/duration):0);
     }
@@ -158,16 +163,16 @@ public final class MainActivity extends Activity {
 
     private void render(){
         if(pageTitle==null)return;queueView=page==PLAYER;
-        String[] names={"录音库","录音室","随听播放器","预设队列"};String[] subtitles={"整理声音，按你的顺序听。","暂停留一段，继续下一段。","让片段连起来，让声音继续。","保存顺序，随时重新开始。"};pageTitle.setText(names[page]);pageSubtitle.setText(subtitles[page]);
+        String[] names={"录音库","录音室","播放","预设队列"};pageTitle.setText(names[page]);
         for(int i=0;i<pages.length;i++){pages[i].setVisibility(i==page?View.VISIBLE:View.GONE);navIcons[i].setColor(i==page?TEAL:MUTED);navLabels[i].setTextColor(i==page?TEAL:MUTED);navLabels[i].setTypeface(null,i==page?Typeface.BOLD:Typeface.NORMAL);surface(navItems[i],i==page?0xffe8f1e6:Color.TRANSPARENT,18);navItems[i].setSelected(i==page);}
         miniPlayer.setVisibility(page==LIBRARY||page==PRESETS?View.VISIBLE:View.GONE);savedPresets=library.presets();presetAdapter.notifyDataSetChanged();renderRows();
     }
     private void updateSelection(){selection.setText("已选 "+selected.size()+" 段 · 按勾选顺序");selectionBar.setVisibility(selected.isEmpty()?View.GONE:View.VISIBLE);}
     private void renderRows(){
         if(libraryAdapter==null)return;String q=search.getText().toString().trim().toLowerCase(Locale.ROOT);visibleCatalog=new ArrayList<>();
-        for(Recording r:catalog)if((category.equals("全部")||r.source.equals(category))&&r.name.toLowerCase(Locale.ROOT).contains(q))visibleCatalog.add(r);
+        for(Recording r:catalog)if((category.equals("全部")||r.source.equals(category))&&folders.matches(r.uri,folderId)&&r.name.toLowerCase(Locale.ROOT).contains(q))visibleCatalog.add(r);
         for(int i=0;i<filters.getChildCount();i++){Button b=(Button)filters.getChildAt(i);boolean active=category.equals(b.getTag());b.setTextColor(active?Color.WHITE:TEAL);b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x2221785c),background(active?TEAL:0xffe8eee6,14),null));b.setSelected(active);}
-        updateSelection();libraryAdapter.notifyDataSetChanged();queueAdapter.notifyDataSetChanged();
+        folderSelector.setText(folderName(folderId)+" ▾");if(!scanning)status.setText(visibleCatalog.size()+" 段");updateSelection();libraryAdapter.notifyDataSetChanged();queueAdapter.notifyDataSetChanged();
     }
     private final class RecordingAdapter extends BaseAdapter {
         private final boolean isQueue;
@@ -176,7 +181,7 @@ public final class MainActivity extends Activity {
         public Recording getItem(int position){return (isQueue?queue:visibleCatalog).get(position);}
         public long getItemId(int position){return position;}
         public View getView(int position,View recycled,ViewGroup parent){
-            if(isQueue&&queue.isEmpty()){TextView empty=text("队列还没有片段\n\n去录音库勾选，或从预设载入一组声音。",14,MUTED);empty.setPadding(dp(14),dp(28),dp(14),dp(28));empty.setOnClickListener(v->showPage(LIBRARY));return empty;}
+            if(isQueue&&queue.isEmpty()){TextView empty=text("队列为空",14,MUTED);empty.setPadding(dp(14),dp(28),dp(14),dp(28));empty.setOnClickListener(v->showPage(LIBRARY));return empty;}
             return recordingRow(getItem(position),position,isQueue,false);
         }
     }
@@ -191,11 +196,12 @@ public final class MainActivity extends Activity {
         info.setOnLongClickListener(v->{renameDialog(r);return true;});card.addView(iconButton(IconView.MORE,r.name+"的更多操作",()->{if(inQueue)queueItemActions(r,index);else recordingActions(r);}));return wrapper;
     }
     private void recordingActions(Recording r){
-        new AlertDialog.Builder(this).setTitle(r.name).setItems(new String[]{"加入播放队尾","导出录音","重命名","修正来源","文件信息"},(d,w)->{
-            if(w==0){queue.add(r);persistAndAppend(r);render();toast("已加入播放队尾");}else if(w==1)beginExport(Collections.singletonList(r));else if(w==2)renameDialog(r);else if(w==3)sourceDialog("修正录音来源",source->{library.override(r,source);library.save("catalog",catalog);renderRows();});else new AlertDialog.Builder(this).setTitle(r.name).setMessage("来源："+r.source+"\n位置："+r.path+"\n时长："+time(r.duration)).setPositiveButton("关闭",null).show();
+        new AlertDialog.Builder(this).setTitle(r.name).setItems(new String[]{"加入播放队尾","移动到文件夹","导出录音","重命名","删除录音","修正来源","文件信息"},(d,w)->{
+            if(w==0){queue.add(r);persistAndAppend(r);render();}else if(w==1)moveToFolder(Collections.singletonList(r));else if(w==2)beginExport(Collections.singletonList(r));else if(w==3)renameDialog(r);else if(w==4)confirmDelete(Collections.singletonList(r));else if(w==5)sourceDialog("修正录音来源",source->{library.override(r,source);library.save("catalog",catalog);renderRows();});else new AlertDialog.Builder(this).setTitle(r.name).setMessage("来源："+r.source+"\n文件夹："+folderName(folders.folderOf(r.uri))+"\n位置："+r.path+"\n时长："+time(r.duration)).setPositiveButton("关闭",null).show();
         }).show();
     }
-    private void queueItemActions(Recording r,int index){new AlertDialog.Builder(this).setTitle(r.name).setItems(new String[]{"播放这段","上移","下移","导出录音","重命名","移出队列"},(d,w)->{if(w==0){if(player!=null&&canPlay()){player.seekTo(index,0);player.prepare();player.play();}}else if(w==1)move(index,-1);else if(w==2)move(index,1);else if(w==3)beginExport(Collections.singletonList(r));else if(w==4)renameDialog(r);else remove(index);}).show();}
+    private void queueItemActions(Recording r,int index){new AlertDialog.Builder(this).setTitle(r.name).setItems(new String[]{"播放这段","上移","下移","移动到文件夹","导出录音","重命名","移出队列","删除录音"},(d,w)->{if(w==0){if(player!=null&&canPlay()){player.seekTo(index,0);player.prepare();player.play();}}else if(w==1)move(index,-1);else if(w==2)move(index,1);else if(w==3)moveToFolder(Collections.singletonList(r));else if(w==4)beginExport(Collections.singletonList(r));else if(w==5)renameDialog(r);else if(w==6)remove(index);else confirmDelete(Collections.singletonList(r));}).show();}
+
     private final class PresetAdapter extends BaseAdapter {
         public int getCount(){return savedPresets.size();}public Preset getItem(int i){return savedPresets.get(i);}public long getItemId(int i){return i;}
         public View getView(int i,View old,ViewGroup parent){Preset p=getItem(i);LinearLayout wrapper=column();wrapper.setPadding(0,0,0,dp(12));LinearLayout card=line();card.setPadding(dp(16),dp(18),dp(6),dp(18));surface(card,Color.WHITE,22);
@@ -205,11 +211,11 @@ public final class MainActivity extends Activity {
 
     private List<Recording> selectedRows(){List<Recording> chosen=new ArrayList<>();for(String uri:selected)for(Recording r:catalog)if(uri.equals(r.uri)){chosen.add(r);break;}return chosen;}
     private void showActions(){
-        if(page==PLAYER){new AlertDialog.Builder(this).setTitle("播放队列 · "+queue.size()+" 段").setItems(new String[]{"从第一首开始播放","保存为预设","导出整个队列","清空队列"},(d,w)->{if(w==0)applyQueue(0,true);else if(w==1)saveQueuePreset();else if(w==2)beginExport(queue);else new AlertDialog.Builder(this).setMessage("清空播放队列？音频文件会保留。").setPositiveButton("清空",(a,b)->{queue.clear();library.save("queue",queue);if(player!=null)player.clearMediaItems();render();}).setNegativeButton("取消",null).show();}).show();return;}
-        new AlertDialog.Builder(this).setTitle("录音选择与排序").setItems(new String[]{"将所选加入队尾","用所选替换队列并播放","导出所选录音","选择当前筛选全部","取消全部选择","按名称排序","按时间排序（最新在前）"},(d,w)->{
+        if(page==PLAYER){new AlertDialog.Builder(this).setTitle("播放队列 · "+queue.size()+" 段").setItems(new String[]{"从第一首开始播放","播放模式","保存为预设","导出整个队列","清空队列","使用帮助"},(d,w)->{if(w==0)applyQueue(0,true);else if(w==1)choosePlaybackMode();else if(w==2)saveQueuePreset();else if(w==3)beginExport(queue);else if(w==4)new AlertDialog.Builder(this).setMessage("清空播放队列？音频文件会保留。").setPositiveButton("清空",(a,b)->{queue.clear();library.save("queue",queue);if(player!=null)player.clearMediaItems();render();}).setNegativeButton("取消",null).show();else help();}).show();return;}
+        new AlertDialog.Builder(this).setTitle("录音操作").setItems(new String[]{"将所选加入队尾","用所选替换队列并播放","移动所选到文件夹","导出所选录音","删除所选录音","选择当前筛选全部","取消全部选择","按名称排序","按时间排序"},(d,w)->{
             if(w<=1){if(player==null){toast("播放器正在连接");return;}List<Recording> chosen=selectedRows();if(chosen.isEmpty()){toast("请先勾选录音");return;}if(w==1&&!canPlay())return;
                 if(w==1){queue.clear();queue.addAll(chosen);applyQueue(0,true);}else{queue.addAll(chosen);library.save("queue",queue);List<MediaItem> items=new ArrayList<>();for(Recording r:chosen)items.add(r.item());player.addMediaItems(items);}selected.clear();showPage(PLAYER);
-            }else if(w==2)beginExport(selectedRows());else if(w==3){for(Recording r:visibleCatalog)selected.add(r.uri);renderRows();}else if(w==4){selected.clear();renderRows();}else{if(w==5)catalog.sort((a,b)->a.name.compareToIgnoreCase(b.name));else catalog.sort((a,b)->Long.compare(b.date,a.date));renderRows();}
+            }else if(w==2)moveToFolder(selectedRows());else if(w==3)beginExport(selectedRows());else if(w==4)confirmDelete(selectedRows());else if(w==5){for(Recording r:visibleCatalog)selected.add(r.uri);renderRows();}else if(w==6){selected.clear();renderRows();}else{if(w==7)catalog.sort((a,b)->a.name.compareToIgnoreCase(b.name));else catalog.sort((a,b)->Long.compare(b.date,a.date));renderRows();}
         }).show();
     }
 
@@ -221,12 +227,12 @@ public final class MainActivity extends Activity {
     private void requestScan(){if(checkSelfPermission(permission())!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{permission()},10);else scan();}
     @Override public void onRequestPermissionsResult(int request,String[] p,int[] results){super.onRequestPermissionsResult(request,p,results);if(request==11){if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)sendCapture(CaptureService.START);else permissionHelp("录音需要麦克风权限，请在系统设置中允许后重试。");return;}scan();if(results.length>0&&results[0]!=PackageManager.PERMISSION_GRANTED)permissionHelp("未获得音频读取权限。仍可授权文件夹或导入文件；如需自动扫描，请在系统设置中允许“音乐和音频”权限。");}
     private void permissionHelp(String message){new AlertDialog.Builder(this).setMessage(message).setPositiveButton("打开设置",(d,w)->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))).setNegativeButton("稍后",null).show();}
-    private void scan(){if(scanning)return;scanning=true;status.setText("正在扫描本地音频…");worker.execute(()->{List<String> warnings=new ArrayList<>();List<Recording> result=library.scan(warnings);runOnUiThread(()->{if(destroyed)return;scanning=false;catalog=result;status.setText("发现 "+catalog.size()+" 个音频 · 全部在本机处理");render();if(!warnings.isEmpty())toast(String.join("\n",warnings));});});}
+    private void scan(){if(scanning)return;scanning=true;status.setText("扫描中");worker.execute(()->{List<String> warnings=new ArrayList<>();List<Recording> result=library.scan(warnings);runOnUiThread(()->{if(destroyed)return;scanning=false;catalog=result;queue=library.load("queue");status.setText(catalog.size()+" 段");render();if(!warnings.isEmpty())toast(String.join("\n",warnings));});});}
     private interface SourceAction{void run(String source);}
     private void sourceDialog(String title,SourceAction action){String[] choices={SourceRules.APP,SourceRules.RECORDER,SourceRules.CALL,SourceRules.OTHER};new AlertDialog.Builder(this).setTitle(title).setItems(choices,(d,w)->action.run(choices[w])).setNegativeButton("取消",null).show();}
     private void chooseTree(){sourceDialog("这个文件夹存放哪类音频？",source->{treeSource=source;Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);startActivityForResult(i,20);});}
     private void chooseFiles(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("audio/*");i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,21);}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==40){if(result==RESULT_OK&&data!=null&&data.getData()!=null)performExport(data.getData());return;}if(request==30){if(result==RESULT_OK&&pendingRename!=null&&pendingRenameTitle!=null)renameFile(pendingRename,pendingRenameTitle,false);else toast("未授权修改文件，可选择仅修改软件内名称");return;}if(result!=RESULT_OK||data==null)return;
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==31){finishDeleteConsent(result==RESULT_OK);return;}if(request==40){if(result==RESULT_OK&&data!=null&&data.getData()!=null)performExport(data.getData());return;}if(request==30){if(result==RESULT_OK&&pendingRename!=null&&pendingRenameTitle!=null)renameFile(pendingRename,pendingRenameTitle,false);else toast("未授权修改文件，可选择仅修改软件内名称");return;}if(result!=RESULT_OK||data==null)return;
         if(request==20&&data.getData()!=null){try{getContentResolver().takePersistableUriPermission(data.getData(),Intent.FLAG_GRANT_READ_URI_PERMISSION);if((data.getFlags()&Intent.FLAG_GRANT_WRITE_URI_PERMISSION)!=0)getContentResolver().takePersistableUriPermission(data.getData(),Intent.FLAG_GRANT_WRITE_URI_PERMISSION);library.addTree(data.getData(),treeSource);scan();}catch(Exception e){toast("文件夹授权失败，请重新选择");}}
         else if(request==21){List<Uri> uris=new ArrayList<>();if(data.getClipData()!=null)for(int i=0;i<data.getClipData().getItemCount();i++)uris.add(data.getClipData().getItemAt(i).getUri());else if(data.getData()!=null)uris.add(data.getData());importUris(uris);}
     }
@@ -287,6 +293,47 @@ public final class MainActivity extends Activity {
     }
 
     private void recordingDialog(){showPage(STUDIO);}
+    private String folderName(String id){if(FolderStore.ALL.equals(id))return "全部文件夹";if(id.isEmpty())return "未分类";for(AudioFolder f:folders.list())if(f.id.equals(id))return f.name;return "未分类";}
+    private void showFolderPicker(){
+        List<AudioFolder> list=folders.list();String[] labels=new String[list.size()+3];labels[0]="全部文件夹";labels[1]="未分类";for(int i=0;i<list.size();i++)labels[i+2]=list.get(i).name;labels[labels.length-1]="＋ 新建文件夹";
+        new AlertDialog.Builder(this).setTitle("文件夹").setItems(labels,(d,w)->{if(w==labels.length-1)createFolder(null);else{folderId=w==0?FolderStore.ALL:w==1?FolderStore.UNFILED:list.get(w-2).id;renderRows();}}).show();
+    }
+    private void createFolder(List<Recording> move){askName("新建文件夹","",name->{AudioFolder folder=folders.create(name);if(move!=null)folders.move(move,folder.id);folderId=folder.id;selected.clear();renderRows();});}
+    private void moveToFolder(List<Recording> rows){
+        if(rows.isEmpty()){toast("请先选择录音");return;}List<Recording> snapshot=new ArrayList<>();for(Recording r:rows)snapshot.add(library.resolve(Recording.from(r.json())));
+        List<AudioFolder> list=folders.list();String[] labels=new String[list.size()+2];labels[0]="未分类";for(int i=0;i<list.size();i++)labels[i+1]=list.get(i).name;labels[labels.length-1]="＋ 新建文件夹";
+        new AlertDialog.Builder(this).setTitle("移动 "+snapshot.size()+" 段录音").setItems(labels,(d,w)->{if(w==labels.length-1){createFolder(snapshot);return;}try{folders.move(snapshot,w==0?FolderStore.UNFILED:list.get(w-1).id);selected.clear();renderRows();toast("已移动 "+snapshot.size()+" 段");}catch(Exception e){toast(e.getMessage());}}).show();
+    }
+    private void manageFolders(){List<AudioFolder> list=folders.list();String[] labels=new String[list.size()+1];for(int i=0;i<list.size();i++)labels[i]=list.get(i).name;labels[labels.length-1]="＋ 新建文件夹";
+        new AlertDialog.Builder(this).setTitle("管理文件夹").setItems(labels,(d,w)->{if(w==list.size()){createFolder(null);return;}AudioFolder folder=list.get(w);new AlertDialog.Builder(this).setTitle(folder.name).setItems(new String[]{"打开","重命名","删除文件夹"},(a,b)->{if(b==0){folderId=folder.id;renderRows();}else if(b==1)askName("重命名文件夹",folder.name,name->{folders.rename(folder.id,name);renderRows();});else new AlertDialog.Builder(this).setTitle("删除文件夹？").setMessage("其中录音将回到未分类，不删除音频文件。").setPositiveButton("删除",(x,y)->{try{folders.delete(folder.id);if(folderId.equals(folder.id))folderId=FolderStore.ALL;renderRows();}catch(Exception e){toast(e.getMessage());}}).setNegativeButton("取消",null).show();}).show();}).show();
+    }
+    private void chooseCaptureFormat(){CaptureJournal s=CaptureJournal.read(this);if(CaptureService.running&&s!=null&&!s.state.equals("finished")){toast("请结束本次录音后切换格式");return;}CaptureFormat current=CaptureFormat.from(getSharedPreferences("capture_settings",0).getString("format","M4A"));CaptureFormat[] values=CaptureFormat.values();String[] labels=new String[values.length];for(int i=0;i<values.length;i++)labels[i]=values[i].label;
+        new AlertDialog.Builder(this).setTitle("录音格式").setSingleChoiceItems(labels,current.ordinal(),(d,w)->{getSharedPreferences("capture_settings",0).edit().putString("format",values[w].name()).apply();formatButton.setText(values[w].label);d.dismiss();}).setNegativeButton("取消",null).show();
+    }
+    private void choosePlaybackMode(){if(player==null){toast("播放器正在连接");return;}int mode=player.getRepeatMode()==Player.REPEAT_MODE_ONE?2:player.getShuffleModeEnabled()?1:0;new AlertDialog.Builder(this).setTitle("播放模式").setSingleChoiceItems(new String[]{"顺序播放","乱序播放","单曲循环"},mode,(d,w)->{player.setRepeatMode(w==2?Player.REPEAT_MODE_ONE:Player.REPEAT_MODE_OFF);player.setShuffleModeEnabled(w==1);updatePlayer();d.dismiss();}).setNegativeButton("取消",null).show();}
+    private void confirmDelete(List<Recording> input){
+        if(input.isEmpty()){toast("请先选择录音");return;}List<Recording> rows=new ArrayList<>();Set<String> seen=new HashSet<>();for(Recording r:input)if(seen.add(r.uri))rows.add(Recording.from(r.json()));
+        new AlertDialog.Builder(this).setTitle("删除 "+rows.size()+" 段录音？").setMessage("删除文件会从手机移除音频，并清理队列和预设中的引用。导入录音只删除本软件保存的副本。系统录音可能需要安卓授权。")
+            .setPositiveButton("删除文件",(d,w)->processDeletion(rows,false)).setNeutralButton("仅移出软件",(d,w)->processDeletion(rows,true)).setNegativeButton("取消",null).show();
+    }
+    private void processDeletion(List<Recording> rows,boolean hideOnly){
+        if(deleting){toast("正在处理删除");return;}if(ExportJob.status().running){toast("请等待导出完成后删除录音");return;}deleting=true;
+        worker.execute(()->{try{RecordingDeletion.Result result=new RecordingDeletion(this).delete(rows,hideOnly);runOnUiThread(()->{deleting=false;if(destroyed)return;selected.removeIf(library::isHidden);studioFingerprint=null;queue=library.load("queue");scan();render();
+            String message=(hideOnly?"已移出 ":"已删除 ")+result.removed.size()+" 段"+(result.failed.isEmpty()?"":"，失败 "+result.failed.size()+" 段");toast(message);
+            if(!result.consent.isEmpty())requestDeleteConsent(result);
+        });}catch(Exception e){runOnUiThread(()->{deleting=false;if(!destroyed){scan();toast("删除未完成："+e.getMessage());}});}});
+    }
+    private void requestDeleteConsent(RecordingDeletion.Result result){
+        try{library.save("pendingDelete",result.consent);boolean modern=Build.VERSION.SDK_INT>=30;getPreferences(0).edit().putBoolean("deleteModern",modern).apply();PendingIntent consent;
+            if(modern){List<Uri> uris=new ArrayList<>();for(Recording r:result.consent)uris.add(Uri.parse(r.uri));consent=android.provider.MediaStore.createDeleteRequest(getContentResolver(),uris);}else consent=result.legacyConsent;
+            if(consent==null)throw new IllegalStateException("没有可用的删除授权");startIntentSenderForResult(consent.getIntentSender(),31,null,0,0,0);
+        }catch(Exception e){toast("部分文件需要写入权限，请重新授权文件夹或仅移出软件");}
+    }
+    private void finishDeleteConsent(boolean granted){
+        List<Recording> rows=library.load("pendingDelete");library.save("pendingDelete",Collections.emptyList());if(!granted){toast("已取消剩余录音的删除");return;}
+        if(!getPreferences(0).getBoolean("deleteModern",false)){processDeletion(rows,false);return;}
+        worker.execute(()->{try{library.removeRecordings(rows);runOnUiThread(()->{PlaybackService.removeHidden();if(!destroyed){selected.removeIf(library::isHidden);studioFingerprint=null;queue=library.load("queue");scan();render();toast("已删除 "+rows.size()+" 段");}});}catch(Exception e){runOnUiThread(()->{if(!destroyed)toast("文件已删除，请重新扫描更新列表");});}});
+    }
     private void confirmFinish(){new AlertDialog.Builder(this).setTitle("结束本次长录音？").setMessage("当前片段将保存，本次全部有效片段会按顺序生成预设队列。").setPositiveButton("结束并保存",(d,w)->sendCapture(CaptureService.FINISH)).setNegativeButton("暂不结束",null).show();}
 
     private void beginExport(List<Recording> input){
@@ -324,23 +371,23 @@ public final class MainActivity extends Activity {
 
     private void updateCapture(){
         CaptureJournal s=CaptureJournal.read(this);boolean active=CaptureService.running&&s!=null&&!s.state.equals("finished"),recording=active&&s.active!=null;long current=recording?Math.max(0,SystemClock.elapsedRealtime()-s.activeSince):0;
-        studioPhase.setText(recording?"● 正在录音":active?"Ⅱ 已暂停":s!=null&&!s.rows.isEmpty()?"本次已结束":"准备就绪");studioPhase.setTextColor(recording?0xffd3f3bb:MINT);studioTimer.setText(time(recording?current:s==null?0:s.total));studioName.setText(recording?s.active.name:active?"累计有效录音时长":s!=null&&!s.rows.isEmpty()?"本次录音累计时长":"开始一段新的声音记录");
+        studioPhase.setText(recording?"● 正在录音":active?"Ⅱ 已暂停":s!=null&&!s.rows.isEmpty()?"本次已结束":"准备就绪");studioPhase.setTextColor(recording?0xffd3f3bb:MINT);studioTimer.setText(time(recording?current:s==null?0:s.total));studioName.setText(recording?s.active.name:active?"累计有效录音时长":s!=null&&!s.rows.isEmpty()?"本次录音累计时长":"未录音");
         navLabels[STUDIO].setText(recording?"录音中":"录音室");navIcons[STUDIO].setColor(recording?0xffbc5947:page==STUDIO?TEAL:MUTED);
         studioCount.setText((s==null?0:s.rows.size())+" 段已保存");studioTotal.setText("累计 "+time((s==null?0:s.total)+current));
-        String summary=s==null?"暂停即保存一段，结束自动生成预设队列。":active?(recording?"正在录制，暂停后保存当前片段。":"已暂停，继续后将创建新片段。"):(s.message.isEmpty()?"长录音已结束":s.message);
-        captureSummary.setText(summary);captureDetail.setText(active&&!s.message.isEmpty()?s.message:recording?"切换页面或熄屏，录音仍会继续。":"录音保存在手机本地，可在片段菜单中导出。");captureToggle.setText(recording?"Ⅱ  暂停并保存片段":active?"●  继续录制下一段":"●  开始长录音");captureFinish.setEnabled(active);captureFinish.setAlpha(active?1f:.45f);
+        String summary=s==null?"":active?"":s.message;
+        captureSummary.setText(summary);captureSummary.setVisibility(summary.isEmpty()?View.GONE:View.VISIBLE);String detail=active&&!s.message.isEmpty()&&!s.message.equals("片段已保存，点击继续录音开始下一段")?s.message:"";captureDetail.setText(detail);captureDetail.setVisibility(detail.isEmpty()?View.GONE:View.VISIBLE);formatButton.setEnabled(!active);formatButton.setText((active?s.format:CaptureFormat.from(getSharedPreferences("capture_settings",0).getString("format","M4A"))).label);captureToggle.setText(recording?"Ⅱ  暂停并保存片段":active?"●  继续录制下一段":"●  开始长录音");captureFinish.setEnabled(active);captureFinish.setAlpha(active?1f:.45f);
         if(page==STUDIO)waveformView.setSamples(CaptureService.waveformSamples(),recording);
         String fingerprint=s==null?"":s.id+":"+s.rows.size()+":"+s.state;
-        if(!fingerprint.equals(studioFingerprint)){studioFingerprint=fingerprint;studioClips.removeAllViews();if(s==null||s.rows.isEmpty()){TextView empty=text("保存后的片段会出现在这里。",12,MUTED);empty.setPadding(0,dp(8),0,dp(16));studioClips.addView(empty);}else{for(int i=Math.max(0,s.rows.size()-6);i<s.rows.size();i++)studioClips.addView(recordingRow(library.resolve(Recording.from(s.rows.get(i).json())),i,false,true));if(s.rows.size()>6)studioClips.addView(button("查看全部本机录音",()->{category=SourceRules.APP;showPage(LIBRARY);}));}}
+        if(!fingerprint.equals(studioFingerprint)){studioFingerprint=fingerprint;studioClips.removeAllViews();if(s==null||s.rows.isEmpty()){TextView empty=text("暂无片段",12,MUTED);empty.setPadding(0,dp(8),0,dp(16));studioClips.addView(empty);}else{for(int i=Math.max(0,s.rows.size()-6);i<s.rows.size();i++)studioClips.addView(recordingRow(library.resolve(Recording.from(s.rows.get(i).json())),i,false,true));if(s.rows.size()>6)studioClips.addView(button("查看全部本机录音",()->{category=SourceRules.APP;showPage(LIBRARY);}));}}
         if(!fingerprint.equals(captureFingerprint)){boolean had=!captureFingerprint.isEmpty();captureFingerprint=fingerprint;if(had)scan();}
     }
 
 
-    private void help(){new AlertDialog.Builder(this).setTitle("录音随听 · 使用帮助").setMessage("录音库：搜索、按来源筛选、勾选片段。右上角选项可扫描录音、授权文件夹或选择排序。片段更多菜单提供导出与重命名。\n\n录音室：开始长录音后显示真实麦克风的实时声音波形。暂停立即保存一段，继续创建新段，结束自动保存整组预设。熄屏或离开页面不停止录音。\n\n播放：顺序连续播放或单曲循环。片段更多菜单可上下移动，队列管理可保存预设或导出整组录音。\n\n预设：重新载入常听顺序，或管理每次长录音生成的整组片段。\n\n导出：单段保持原音频格式，多段打包为按顺序编号的 ZIP，通过系统文件选择器保存。不会删除原录音。\n\n小米录音机私有目录无法直接读取时，请从系统录音机分享导入。若 HyperOS 限制后台运行，可在应用省电策略中设为无限制。").setPositiveButton("知道了",null).show();}
+    private void help(){new AlertDialog.Builder(this).setTitle("使用帮助").setMessage("录音库：按来源、文件夹和名称筛选。勾选后可批量加入队列、移动分类、导出或删除；右上角可全选当前筛选结果。\n\n文件夹：软件内分类，不改变原文件位置。可新建、重命名，删除文件夹会把录音退回未分类。\n\n删除：删除文件不可恢复，会清理播放队列和预设引用；导入录音只删除软件内副本。系统录音需安卓确认。仅移出软件会保留文件，可从录音库右上角恢复。\n\n录音格式：开始前可选 M4A/AAC、AAC、AMR 或 WAV。M4A/AAC 和 AAC 适合普通语音；AMR 为小体积窄带语音；WAV 为无损 PCM16，储存占用较大。同一次长录音保持相同格式。\n\n长录音：暂停保存一段，继续新建下一段；日期编号按当天递增。结束自动生成整组预设。实时波形取自麦克风振幅，熄屏或切换页面不停止录音。\n\n播放：可选顺序、乱序或单曲循环。乱序不改动已保存的队列顺序。片段更多菜单可上移、下移或移出队列。\n\n导出：单段保持原音频格式，多段按当前顺序编号后打包为 ZIP，再选择保存位置。\n\n系统录音机私有目录无法读取时，请从录音机分享导入。HyperOS 终止后台录音时，可在应用省电策略设为无限制。").setPositiveButton("关闭",null).show();}
 
     private void toast(String message){Toast.makeText(this,message,Toast.LENGTH_LONG).show();}
     @Override protected void onResume(){super.onResume();if(library!=null&&!scanning)scan();handler.removeCallbacks(ticker);handler.post(ticker);try{getContentResolver().registerContentObserver(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,true,observer);}catch(SecurityException ignored){}}
     @Override protected void onPause(){getContentResolver().unregisterContentObserver(observer);handler.removeCallbacks(refresh);handler.removeCallbacks(ticker);super.onPause();}
-    @Override protected void onSaveInstanceState(Bundle state){state.putInt("page",page);state.putString("treeSource",treeSource);state.putString("category",category);state.putBoolean("queueView",queueView);state.putStringArrayList("selected",new ArrayList<>(selected));super.onSaveInstanceState(state);}
+    @Override protected void onSaveInstanceState(Bundle state){state.putString("folderId",folderId);state.putInt("page",page);state.putString("treeSource",treeSource);state.putString("category",category);state.putBoolean("queueView",queueView);state.putStringArrayList("selected",new ArrayList<>(selected));super.onSaveInstanceState(state);}
     @Override protected void onDestroy(){destroyed=true;handler.removeCallbacksAndMessages(null);worker.shutdown();if(future!=null)MediaController.releaseFuture(future);super.onDestroy();}
 }

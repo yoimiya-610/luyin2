@@ -15,7 +15,7 @@ public final class NameRules {
     public static int nextNumber(String day,int reserved,Collection<String> names) {
         int max=Math.max(0,reserved);
         for(String name:names) {
-            String base=name.toLowerCase(Locale.ROOT).replaceFirst("\\.m4a$","");
+            String base=name.toLowerCase(Locale.ROOT).replaceFirst("\\.(m4a|aac|amr|wav)$","");
             if(!base.startsWith(day+"-"))continue;
             try{max=Math.max(max,Integer.parseInt(base.substring(day.length()+1)));}catch(NumberFormatException ignored){}
         }

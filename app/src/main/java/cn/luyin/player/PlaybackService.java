@@ -13,6 +13,7 @@ public final class PlaybackService extends MediaSessionService {
     private ExoPlayer player;
     private static PlaybackService active;
     public static void pauseForCapture(){if(active!=null&&active.player!=null)active.player.pause();}
+    public static void removeHidden(){if(active==null||active.player==null)return;Library library=new Library(active);for(int i=active.player.getMediaItemCount()-1;i>=0;i--)if(library.isHidden(active.player.getMediaItemAt(i).mediaId))active.player.removeMediaItem(i);}
     private final android.os.Handler handler=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable checkpoint=new Runnable(){public void run(){savePosition();handler.postDelayed(this,5000);}};
     @Override public void onCreate() {
@@ -25,6 +26,7 @@ public final class PlaybackService extends MediaSessionService {
         android.content.SharedPreferences prefs=getSharedPreferences("playback",0);
         if(!items.isEmpty())player.setMediaItems(items,Math.min(prefs.getInt("index",0),items.size()-1),Math.max(0,prefs.getLong("position",0)));
         player.setRepeatMode(prefs.getBoolean("repeat",false)?Player.REPEAT_MODE_ONE:Player.REPEAT_MODE_OFF);
+        player.setShuffleModeEnabled(prefs.getBoolean("shuffle",false));
         player.addListener(new Player.Listener(){
             @Override public void onEvents(Player p,Player.Events events){savePosition();}
             @Override public void onPlayerError(PlaybackException error){
@@ -36,7 +38,7 @@ public final class PlaybackService extends MediaSessionService {
         session=new MediaSession.Builder(this,player).setSessionActivity(intent).build();
         handler.post(checkpoint);
     }
-    private void savePosition(){if(player!=null)getSharedPreferences("playback",0).edit().putInt("index",Math.max(0,player.getCurrentMediaItemIndex())).putLong("position",Math.max(0,player.getCurrentPosition())).putBoolean("repeat",player.getRepeatMode()==Player.REPEAT_MODE_ONE).apply();}
+    private void savePosition(){if(player!=null)getSharedPreferences("playback",0).edit().putInt("index",Math.max(0,player.getCurrentMediaItemIndex())).putLong("position",Math.max(0,player.getCurrentPosition())).putBoolean("repeat",player.getRepeatMode()==Player.REPEAT_MODE_ONE).putBoolean("shuffle",player.getShuffleModeEnabled()).apply();}
     @Override public MediaSession onGetSession(MediaSession.ControllerInfo info){return session;}
     @Override public void onTaskRemoved(Intent rootIntent){if(!player.getPlayWhenReady()||player.getPlaybackState()==Player.STATE_ENDED)stopSelf();}
     @Override public void onDestroy(){handler.removeCallbacksAndMessages(null);savePosition();if(active==this)active=null;if(session!=null)session.release();if(player!=null)player.release();super.onDestroy();}

@@ -21,14 +21,16 @@ public final class CaptureService extends Service {
     private static final String CHANNEL="long_recording";
     private static final int NOTIFICATION=2001;
     private MediaRecorder recorder;
+    private WavRecorder wav;
+    private long engineGeneration;
     private ParcelFileDescriptor descriptor;
     private PowerManager.WakeLock wakeLock;
     private CaptureJournal journal;
     private Library library;
     private boolean finishing;
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private final Runnable sampleAmplitude=new Runnable(){public void run(){if(recorder!=null&&journal!=null&&journal.active!=null){try{waveform.add(recorder.getMaxAmplitude());}catch(IllegalStateException ignored){}handler.postDelayed(this,100);}}};
-    private final Runnable renewWakeLock=new Runnable(){public void run(){if(recorder!=null&&journal!=null&&journal.active!=null){wakeLock.acquire(10*60*1000L);handler.postDelayed(this,60*1000L);}}};
+    private final Runnable sampleAmplitude=new Runnable(){public void run(){if((recorder!=null||wav!=null)&&journal!=null&&journal.active!=null){try{waveform.add(wav!=null?wav.getMaxAmplitude():recorder.getMaxAmplitude());}catch(IllegalStateException ignored){}handler.postDelayed(this,100);}}};
+    private final Runnable renewWakeLock=new Runnable(){public void run(){if((recorder!=null||wav!=null)&&journal!=null&&journal.active!=null){wakeLock.acquire(10*60*1000L);handler.postDelayed(this,60*1000L);}}};
 
     @Override public void onCreate(){
         super.onCreate();synchronized(CaptureService.class){running=true;}library=new Library(this);
@@ -46,6 +48,7 @@ public final class CaptureService extends Service {
                 if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)throw new SecurityException("未获得麦克风权限");
                 recoverSavedSession(this);
                 journal=new CaptureJournal();journal.title=new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+" 长录音";
+                journal.format=CaptureFormat.from(getSharedPreferences("capture_settings",0).getString("format","M4A"));
                 waveform.clear();
                 journal.write(this);
                 if(Build.VERSION.SDK_INT>=30)startForeground(NOTIFICATION,notification(),ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
@@ -67,17 +70,24 @@ public final class CaptureService extends Service {
         if(journal.active!=null)return;
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)throw new SecurityException("麦克风权限已撤销");
         PlaybackService.pauseForCapture();
+        pruneSaved();
         String name=library.reserveRecordingName();ContentValues values=new ContentValues();
-        values.put(MediaStore.Audio.Media.DISPLAY_NAME,name+".m4a");values.put(MediaStore.Audio.Media.MIME_TYPE,"audio/mp4");
+        values.put(MediaStore.Audio.Media.DISPLAY_NAME,name+"."+journal.format.extension);values.put(MediaStore.Audio.Media.MIME_TYPE,journal.format.mime);
         values.put(MediaStore.Audio.Media.RELATIVE_PATH,Library.recordingPath());values.put(MediaStore.Audio.Media.IS_PENDING,1);
         Uri uri=getContentResolver().insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,values);if(uri==null)throw new IOException("无法创建录音文件");
         journal.active=new Recording(uri.toString(),name,Library.recordingPath(),SourceRules.APP,0,System.currentTimeMillis());
         journal.ledger.begin(uri.toString());journal.state="recording";journal.message="";journal.activeSince=SystemClock.elapsedRealtime();
         try{
             journal.write(this);descriptor=getContentResolver().openFileDescriptor(uri,"rw");if(descriptor==null)throw new IOException("无法打开录音文件");
+            if(journal.format==CaptureFormat.WAV){
+                final long token=++engineGeneration;
+                wav=new WavRecorder(this,descriptor,()->{if(token==engineGeneration&&!finishing)try{finishSession("WAV 录音发生错误");}catch(Exception e){stopSelf();}},()->{if(token==engineGeneration&&!finishing)try{closeSegment();startSegment();}catch(Exception e){try{finishSession("自动分段失败");}catch(Exception ignored){stopSelf();}}},()->{if(token==engineGeneration&&!finishing)try{closeSegment();journal.state="paused";journal.message="麦克风被占用，已暂停";journal.write(this);updateNotification();}catch(Exception e){stopSelf();}});
+                wav.start();
+            }else{
             recorder=Build.VERSION.SDK_INT>=31?new MediaRecorder(this):new MediaRecorder();
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);recorder.setAudioSamplingRate(44100);recorder.setAudioChannels(1);recorder.setAudioEncodingBitRate(128000);
+            int format=journal.format==CaptureFormat.AAC?MediaRecorder.OutputFormat.AAC_ADTS:journal.format==CaptureFormat.AMR?MediaRecorder.OutputFormat.AMR_NB:MediaRecorder.OutputFormat.MPEG_4;
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);recorder.setOutputFormat(format);
+            recorder.setAudioEncoder(journal.format==CaptureFormat.AMR?MediaRecorder.AudioEncoder.AMR_NB:MediaRecorder.AudioEncoder.AAC);recorder.setAudioSamplingRate(journal.format.sampleRate);recorder.setAudioChannels(1);recorder.setAudioEncodingBitRate(journal.format.bitRate);
             final MediaRecorder current=recorder;
             recorder.registerAudioRecordingCallback(getMainExecutor(),new AudioManager.AudioRecordingCallback(){
                 @Override public void onRecordingConfigChanged(List<AudioRecordingConfiguration> configs){
@@ -94,13 +104,16 @@ public final class CaptureService extends Service {
             recorder.setOnInfoListener((mr,what,extra)->{
                 if(mr==recorder&&what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED&&!finishing){try{closeSegment();startSegment();}catch(Exception e){try{finishSession("自动分段失败，已保存可用片段");}catch(Exception ignored){stopSelf();}}}
             });
-            recorder.prepare();recorder.start();journal.activeSince=SystemClock.elapsedRealtime();journal.write(this);wakeLock.acquire(10*60*1000L);handler.postDelayed(renewWakeLock,60*1000L);handler.post(sampleAmplitude);updateNotification();
+            recorder.prepare();recorder.start();
+            }
+            journal.activeSince=SystemClock.elapsedRealtime();journal.write(this);wakeLock.acquire(10*60*1000L);handler.postDelayed(renewWakeLock,60*1000L);handler.post(sampleAmplitude);updateNotification();
         }catch(Exception e){releaseRecorder();try{getContentResolver().delete(uri,null,null);}catch(Exception ignored){}journal.ledger.complete(false);journal.active=null;journal.activeSince=0;journal.state="paused";journal.write(this);throw e;}
     }
     private void closeSegment() throws Exception {
         if(journal.active==null)return;
+        pruneSaved();
         Recording segment=journal.active;long elapsed=Math.max(0,SystemClock.elapsedRealtime()-journal.activeSince);boolean stopped=false;
-        try{if(recorder!=null){recorder.stop();stopped=true;}}catch(RuntimeException ignored){}finally{releaseRecorder();}
+        try{if(wav!=null)stopped=wav.stop();else if(recorder!=null){recorder.stop();stopped=true;}}catch(Exception ignored){}finally{releaseRecorder();}
         if(stopped){segment.duration=duration(this,Uri.parse(segment.uri));if(segment.duration<=0)segment.duration=elapsed;}
         if(stopped&&segment.duration>0){
             // Checkpoint the closed file before publishing it. Recovery can safely repeat publishing.
@@ -117,6 +130,7 @@ public final class CaptureService extends Service {
         if(finishing)return;finishing=true;
         try{
             closeSegment();
+            pruneSaved();
             List<Recording> available=new ArrayList<>();int missing=0;
             for(Recording r:journal.rows){try{publish(this,r);}catch(java.io.FileNotFoundException deleted){missing++;continue;}library.addOwned(r);available.add(r);}
             if(!available.isEmpty())library.putPreset(new Preset(journal.id,journal.title,journal.created,available));
@@ -147,12 +161,15 @@ public final class CaptureService extends Service {
         s.ledger.finish();s.state="finished";s.message="上次录音意外中断，已恢复 "+available.size()+" 个有效片段";s.write(context);return s.message;
     }
     private void releaseRecorder(){
+        engineGeneration++;
         handler.removeCallbacks(sampleAmplitude);
         handler.removeCallbacks(renewWakeLock);
         if(recorder!=null){try{recorder.release();}catch(Exception ignored){}recorder=null;}
+        if(wav!=null){wav.release();wav=null;}
         if(descriptor!=null){try{descriptor.close();}catch(Exception ignored){}descriptor=null;}
         if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();
     }
+    private void pruneSaved(){if(journal==null)return;journal.rows.removeIf(r->library.isHidden(r.uri));journal.ledger.saved.removeIf(library::isHidden);journal.total=0;for(Recording r:journal.rows)journal.total+=r.duration;}
     private PendingIntent command(String action){return PendingIntent.getService(this,action.hashCode(),new Intent(this,CaptureService.class).setAction(action),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);}
     private Notification notification(){
         boolean recording=journal!=null&&journal.state.equals("recording");

@@ -16,8 +16,11 @@ public final class Library {
     private final android.content.SharedPreferences prefs;
     public Library(Context context) { this.context=context.getApplicationContext(); prefs=context.getSharedPreferences("library",0); }
     public synchronized List<Recording> load(String key) {
+        List<Recording> result=rawLoad(key);result.removeIf(r->isHidden(r.uri));return result;
+    }
+    private synchronized List<Recording> rawLoad(String key) {
         List<Recording> result=new ArrayList<>();
-        try { JSONArray a=new JSONArray(prefs.getString(key,"[]")); for(int i=0;i<a.length();i++) result.add(resolve(Recording.from(a.getJSONObject(i)))); } catch(JSONException ignored) {}
+        try { JSONArray a=new JSONArray(prefs.getString(key,"[]")); for(int i=0;i<a.length();i++)result.add(resolve(Recording.from(a.getJSONObject(i)))); } catch(JSONException ignored) {}
         return result;
     }
     public synchronized void save(String key,List<Recording> rows) {
@@ -48,7 +51,7 @@ public final class Library {
         for(Recording r:load("imports"))if(new File(Uri.parse(r.uri).getPath()).exists())found.put(r.uri,r);
         for(Recording r:load("owned")){if(found.containsKey(r.uri)){found.put(r.uri,r);continue;}try(Cursor c=context.getContentResolver().query(Uri.parse(r.uri),new String[]{"_id"},"is_pending=0",null,null)){if(c!=null&&c.moveToFirst())found.put(r.uri,r);}catch(Exception ignored){}}
         for(Recording r:found.values())resolve(r);
-        List<Recording> rows=new ArrayList<>(found.values()); rows.sort((a,b)->Long.compare(b.date,a.date)); save("catalog",rows); return rows;
+        List<Recording> rows=new ArrayList<>(found.values());rows.removeIf(r->isHidden(r.uri)); rows.sort((a,b)->Long.compare(b.date,a.date)); save("catalog",rows); return rows;
     }
     public Recording resolve(Recording r) {
         for(int i=0;i<20;i++){String next=prefs.getString("uri:"+r.uri,null);if(next==null)break;r.uri=next;}
@@ -57,7 +60,7 @@ public final class Library {
     }
     public List<Preset> presets() {
         synchronized(MUTATION_LOCK){List<Preset> list=new ArrayList<>();try{
-            JSONArray a=new JSONArray(prefs.getString("presets","[]"));for(int i=0;i<a.length();i++){Preset p=Preset.from(a.getJSONObject(i));for(Recording r:p.rows)resolve(r);list.add(p);}
+            JSONArray a=new JSONArray(prefs.getString("presets","[]"));for(int i=0;i<a.length();i++){Preset p=Preset.from(a.getJSONObject(i));for(Recording r:p.rows)resolve(r);p.rows.removeIf(r->isHidden(r.uri));list.add(p);}
         }catch(JSONException ignored){}return list;}
     }
     private void writePresets(List<Preset> list) throws IOException {
@@ -69,6 +72,18 @@ public final class Library {
             if(index<0)list.add(0,preset);else list.set(index,preset);writePresets(list);}
     }
     public void deletePreset(String id) throws IOException {synchronized(MUTATION_LOCK){List<Preset> list=presets();list.removeIf(p->p.id.equals(id));writePresets(list);}}
+    public boolean isHidden(String uri){return prefs.getStringSet("hidden",Collections.emptySet()).contains(uri);}
+    private void unhide(String uri){Set<String> hidden=new HashSet<>(prefs.getStringSet("hidden",Collections.emptySet()));if(hidden.remove(uri))prefs.edit().putStringSet("hidden",hidden).commit();}
+    public void removeRecordings(List<Recording> rows)throws IOException{removeRecordings(rows,true);}
+    public void restoreHidden(){prefs.edit().remove("hidden").apply();}
+    public void removeRecordings(List<Recording> rows,boolean deleteIndexes)throws IOException{
+        if(rows.isEmpty())return;synchronized(MUTATION_LOCK){Set<String> hidden=new HashSet<>(prefs.getStringSet("hidden",Collections.emptySet())),removed=new HashSet<>();for(Recording r:rows)removed.add(resolve(Recording.from(r.json())).uri);hidden.addAll(removed);
+            if(!prefs.edit().putStringSet("hidden",hidden).commit())throw new IOException("录音已处理，但删除索引保存失败");
+            for(String key:new String[]{"catalog","queue"})save(key,load(key));
+            if(deleteIndexes)for(String key:new String[]{"imports","owned"}){List<Recording> remaining=rawLoad(key);remaining.removeIf(r->removed.contains(r.uri));save(key,remaining);}
+            List<Preset> list=presets();list.removeIf(p->p.rows.isEmpty());writePresets(list);new FolderStore(context).forget(removed);
+        }
+    }
     public String reserveRecordingName() throws IOException {
         synchronized(MUTATION_LOCK){String day=new java.text.SimpleDateFormat("yyyyMMdd",Locale.ROOT).format(new Date());List<String> names=new ArrayList<>();
             try(Cursor c=context.getContentResolver().query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,new String[]{"_display_name"},"relative_path=?",new String[]{recordingPath()},null)){if(c!=null)while(c.moveToNext())names.add(c.getString(0));}
@@ -78,7 +93,7 @@ public final class Library {
     }
     public static String recordingPath(){return (android.os.Build.VERSION.SDK_INT>=31?"Recordings/":"Music/")+"录音随听/";}
     public void addOwned(Recording r) throws IOException {
-        synchronized(MUTATION_LOCK){List<Recording> list=load("owned");list.removeIf(item->item.uri.equals(r.uri));list.add(r);JSONArray a=new JSONArray();for(Recording item:list)a.put(item.json());
+        synchronized(MUTATION_LOCK){List<Recording> list=rawLoad("owned");list.removeIf(item->item.uri.equals(r.uri));list.add(r);unhide(r.uri);JSONArray a=new JSONArray();for(Recording item:list)a.put(item.json());
             if(!prefs.edit().putString("owned",a.toString()).putString("name:"+r.uri,r.name).commit())throw new IOException("录音已写入，但索引保存失败");}
     }
     public void displayName(Recording r,String name) throws IOException {
@@ -104,7 +119,7 @@ public final class Library {
                 edit.putString("uri:"+old,r.uri).putString("source:"+r.uri,r.source);
                 for(Map.Entry<String,?> entry:prefs.getAll().entrySet())if(entry.getKey().startsWith("uri:")&&old.equals(entry.getValue()))edit.putString(entry.getKey(),r.uri);
             }
-            if(!edit.commit())throw new IOException("文件已改名，但索引保存失败，请重新扫描");r.name=title.trim();return r;
+            if(!edit.commit())throw new IOException("文件已改名，但索引保存失败，请重新扫描");if(!old.equals(r.uri))new FolderStore(context).redirect(old,r.uri);r.name=title.trim();return r;
         }
     }
     private void scanTree(Uri tree,String id,String source,Map<String,Recording> found,Set<String> seen,int depth) throws Exception {
@@ -141,11 +156,18 @@ public final class Library {
         } catch(Exception e){temp.delete();throw e;}
         StringBuilder hex=new StringBuilder(); for(byte b:digest.digest())hex.append(String.format(Locale.ROOT,"%02x",b));
         File dest=new File(dir,hex+".audio");
+        String prior=prefs.getString("hash:"+hex,Uri.fromFile(dest).toString());Recording previous=resolve(new Recording(prior,name,"应用内导入副本",source,0,0));
+        List<Recording> imports=rawLoad("imports");
+        if("file".equals(Uri.parse(previous.uri).getScheme())&&new File(Uri.parse(previous.uri).getPath()).exists()){
+            temp.delete();unhide(previous.uri);for(Recording r:imports)if(r.uri.equals(previous.uri))return r;
+            previous.date=System.currentTimeMillis();imports.add(previous);save("imports",imports);return previous;
+        }
+        if(prefs.contains("uri:"+Uri.fromFile(dest)))dest=new File(dir,hex+"-"+UUID.randomUUID()+".audio");
         if(dest.exists())temp.delete(); else if(!temp.renameTo(dest)){temp.delete();throw new IOException("保存音频失败");}
         long duration=0;MediaMetadataRetriever retriever=new MediaMetadataRetriever();
         try{retriever.setDataSource(dest.getAbsolutePath());duration=Long.parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));}catch(Exception ignored){}finally{retriever.release();}
         Recording row=new Recording(Uri.fromFile(dest).toString(),name,"应用内导入副本",source,duration,System.currentTimeMillis());
-        List<Recording> imports=load("imports");for(Recording r:imports)if(r.uri.equals(row.uri))return r;
+        prefs.edit().putString("hash:"+hex,row.uri).apply();unhide(row.uri);for(Recording r:imports)if(r.uri.equals(row.uri))return r;
         imports.add(row);save("imports",imports);return row;
     }
 }

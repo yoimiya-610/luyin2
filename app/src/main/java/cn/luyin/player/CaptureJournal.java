@@ -8,6 +8,7 @@ import java.util.*;
 /** Synchronous checkpoints keep already closed segments recoverable after process death. */
 public final class CaptureJournal {
     public String id=UUID.randomUUID().toString(),title="",state="paused",message="";
+    public CaptureFormat format=CaptureFormat.M4A;
     public long created=System.currentTimeMillis(),activeSince=0,total=0;
     public Recording active;
     public final List<Recording> rows=new ArrayList<>();
@@ -15,7 +16,7 @@ public final class CaptureJournal {
     public JSONObject json() throws JSONException {
         JSONArray items=new JSONArray();for(Recording r:rows)items.put(r.json());
         return new JSONObject().put("id",id).put("title",title).put("state",state).put("message",message)
-            .put("created",created).put("activeSince",activeSince).put("total",total).put("rows",items)
+            .put("format",format.name()).put("created",created).put("activeSince",activeSince).put("total",total).put("rows",items)
             .put("active",active==null?JSONObject.NULL:active.json());
     }
     public void write(Context context) throws IOException {
@@ -25,7 +26,8 @@ public final class CaptureJournal {
     public static CaptureJournal read(Context context) {
         String value=context.getSharedPreferences("capture",0).getString("journal",null);if(value==null)return null;
         try{JSONObject j=new JSONObject(value);CaptureJournal s=new CaptureJournal();s.id=j.getString("id");s.title=j.getString("title");s.state=j.getString("state");s.message=j.optString("message");s.created=j.getLong("created");s.activeSince=j.optLong("activeSince");s.total=j.optLong("total");
-            JSONArray a=j.getJSONArray("rows");for(int i=0;i<a.length();i++){Recording r=Recording.from(a.getJSONObject(i));s.rows.add(r);s.ledger.saved.add(r.uri);}
+            s.format=CaptureFormat.from(j.optString("format","M4A"));Library library=new Library(context);s.total=0;
+            JSONArray a=j.getJSONArray("rows");for(int i=0;i<a.length();i++){Recording r=library.resolve(Recording.from(a.getJSONObject(i)));if(!library.isHidden(r.uri)){s.rows.add(r);s.ledger.saved.add(r.uri);s.total+=r.duration;}}
             if(!j.isNull("active")){s.active=Recording.from(j.getJSONObject("active"));s.ledger.begin(s.active.uri);}s.ledger.finished=s.state.equals("finished");return s;
         }catch(JSONException e){return null;}
     }
