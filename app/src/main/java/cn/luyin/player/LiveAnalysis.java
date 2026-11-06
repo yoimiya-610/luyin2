@@ -20,12 +20,15 @@ public final class LiveAnalysis {
     private long session,segment;
     private double seconds;
     private volatile boolean enabled=true,needPitch=true;
-    public LiveAnalysis(){Thread worker=new Thread(this::consume,"SoundAnalysis");worker.setDaemon(true);worker.start();}
+    private final Thread worker;
+    private boolean closed;
+    public LiveAnalysis(){worker=new Thread(this::consume,"SoundAnalysis");worker.setDaemon(true);worker.start();}
+    public synchronized void close(){closed=true;session++;segment++;queue.clear();worker.interrupt();}
     public synchronized void newSession(){session++;segment++;seconds=0;queue.clear();snapshot=new Snapshot(segment,Collections.emptyList());}
     public synchronized void boundary(){segment++;queue.clear();snapshot=new Snapshot(segment,snapshot.frames);}
     public synchronized void configure(boolean enabled,boolean needPitch){if(this.enabled!=enabled||this.needPitch!=needPitch)boundary();this.enabled=enabled;this.needPitch=needPitch;}
     public synchronized void submit(short[] pcm,int length,int rate){
-        seconds+=length/(double)rate;if(!enabled)return;short[] copy=Arrays.copyOf(pcm,length);
+        if(closed)return;seconds+=length/(double)rate;if(!enabled)return;short[] copy=Arrays.copyOf(pcm,length);
         if(queue.remainingCapacity()==0){queue.clear();segment++;snapshot=new Snapshot(segment,snapshot.frames);}
         queue.offer(new Chunk(copy,rate,session,segment,seconds,needPitch));
     }
