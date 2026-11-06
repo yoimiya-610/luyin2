@@ -35,11 +35,11 @@ public final class Library {
     public List<Recording> scan(List<String> warnings) {
         LinkedHashMap<String,Recording> found=new LinkedHashMap<>();
         Uri collection=MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
-        String[] projection={"_id","_display_name","relative_path","duration","date_modified","owner_package_name"};
-        try(Cursor c=context.getContentResolver().query(collection,projection,"is_pending=0",null,"date_modified DESC")) {
+        try(Cursor c=querySharedAudio(collection)) {
             if(c!=null)while(c.moveToNext()) {
-                String path=c.getString(2),name=c.getString(1);
-                Recording r=new Recording(ContentUris.withAppendedId(collection,c.getLong(0)).toString(),name==null?"未命名录音":name,path==null?"共享音频":path,SourceRules.classify(path,c.getString(5)),c.getLong(3),c.getLong(4)*1000);
+                int pathColumn=c.getColumnIndex("relative_path"),ownerColumn=c.getColumnIndex("owner_package_name");
+                String path=pathColumn<0?null:c.getString(pathColumn),owner=ownerColumn<0?null:c.getString(ownerColumn),name=c.getString(c.getColumnIndexOrThrow("_display_name"));
+                Recording r=new Recording(ContentUris.withAppendedId(collection,c.getLong(c.getColumnIndexOrThrow("_id"))).toString(),name==null?"未命名录音":name,path==null?"共享音频":path,SourceRules.classify(path,owner),c.getLong(c.getColumnIndexOrThrow("duration")),c.getLong(c.getColumnIndexOrThrow("date_modified"))*1000);
                 found.put(r.uri,r);
             }
         } catch(SecurityException e) { warnings.add("尚未授权读取音频，已保留导入文件与授权文件夹。"); }
@@ -52,6 +52,14 @@ public final class Library {
         for(Recording r:load("owned")){if(found.containsKey(r.uri)){found.put(r.uri,r);continue;}try(Cursor c=context.getContentResolver().query(Uri.parse(r.uri),new String[]{"_id"},"is_pending=0",null,null)){if(c!=null&&c.moveToFirst())found.put(r.uri,r);}catch(Exception ignored){}}
         for(Recording r:found.values())resolve(r);
         List<Recording> rows=new ArrayList<>(found.values());rows.removeIf(r->isHidden(r.uri)); rows.sort((a,b)->Long.compare(b.date,a.date)); save("catalog",rows); return rows;
+    }
+    private Cursor querySharedAudio(Uri collection){
+        String[] columns={"_id","_display_name","relative_path","duration","date_modified","owner_package_name"};
+        try{return context.getContentResolver().query(collection,columns,"is_pending=0",null,"date_modified DESC");}
+        catch(IllegalArgumentException unsupportedColumn){
+            // Owner metadata is optional. A vendor provider rejecting it must not hide all recordings.
+            return context.getContentResolver().query(collection,Arrays.copyOf(columns,columns.length-1),"is_pending=0",null,"date_modified DESC");
+        }
     }
     public Recording resolve(Recording r) {
         for(int i=0;i<20;i++){String next=prefs.getString("uri:"+r.uri,null);if(next==null)break;r.uri=next;}
