@@ -40,7 +40,10 @@ public final class TrialMonitor {
     private void interrupted(long token,String text){if(token==generation&&engine!=null){stop();message=text;}}
     public void stop(){
         Engine old=engine;if(old==null)return;engine=null;generation++;handler.removeCallbacks(sample);
-        try{old.stop();}catch(IOException|RuntimeException e){message="试音已停止";}finally{duration=old.duration();old.release();analysis.boundary();}
+        try{old.stop();}catch(IOException|RuntimeException e){message="试音已停止";}finally{
+            try{duration=old.duration();}catch(RuntimeException e){message="试音已停止";}
+            try{old.release();}catch(RuntimeException e){message="试音已停止";}finally{analysis.boundary();}
+        }
     }
     public void clear(){stop();hasSession=false;message="";duration=0;waveform.clear();analysis.newSession();}
     public void close(){stop();analysis.close();}

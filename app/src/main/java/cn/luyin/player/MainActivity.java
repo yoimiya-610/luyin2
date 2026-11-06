@@ -168,8 +168,7 @@ public final class MainActivity extends Activity {
     private void configureAnalysis(){boolean pitch=analysisOption("pitch"),harmonics=analysisOption("harmonics"),stability=analysisOption("stability"),spectrum=getSharedPreferences("analysis_settings",0).getString("display","wave").equals("spectrum");CaptureService.configureAnalysis(spectrum||pitch||harmonics||stability,pitch||harmonics||stability);if(trial!=null)trial.configure(spectrum||pitch||harmonics||stability,pitch||harmonics||stability);}
     private void updateAnalysis(){
         if(page!=STUDIO||spectrumView==null)return;boolean pitch=analysisOption("pitch"),harmonics=analysisOption("harmonics"),stability=analysisOption("stability"),spectrum=getSharedPreferences("analysis_settings",0).getString("display","wave").equals("spectrum");
-        waveformView.setVisibility(spectrum?View.GONE:View.VISIBLE);spectrumView.setVisibility(spectrum?View.VISIBLE:View.GONE);waveModeButton.setSelected(!spectrum);spectrumModeButton.setSelected(spectrum);
-        for(Button b:new Button[]{waveModeButton,spectrumModeButton}){b.setTextColor(b.isSelected()?FOREST:MINT);b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33ffffff),background(b.isSelected()?MINT:0xff285343,14),null));}
+        waveformView.setVisibility(spectrum?View.GONE:View.VISIBLE);spectrumView.setVisibility(spectrum?View.VISIBLE:View.GONE);for(Button b:new Button[]{waveModeButton,spectrumModeButton}){boolean selected=b==spectrumModeButton?spectrum:!spectrum;if(b.getTag()==null||b.isSelected()!=selected){b.setTag(Boolean.TRUE);b.setSelected(selected);b.setTextColor(selected?FOREST:MINT);b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33ffffff),background(selected?MINT:0xff285343,14),null));}}
         LiveAnalysis.Snapshot data=trial.hasSession()?trial.snapshot():CaptureService.analysisSnapshot();CaptureJournal session=CaptureJournal.read(this);boolean recording=trial.running()||CaptureService.running&&session!=null&&session.active!=null;SoundFrame f=data.latest();if(recording&&f!=null&&f.segment!=data.segment)f=null;
         if(spectrum)spectrumView.setSnapshot(data,pitch);pitchReadout.setVisibility(pitch?View.VISIBLE:View.GONE);pitchReadout.setText(f!=null&&f.pitchHz>0?String.format(Locale.ROOT,"%.1f Hz  %s  %+.0f 音分",f.pitchHz,PitchDetector.note(f.pitchHz),PitchDetector.noteCents(f.pitchHz)):"— Hz");
         pitchCard.setVisibility(pitch?View.VISIBLE:View.GONE);harmonicCard.setVisibility(harmonics?View.VISIBLE:View.GONE);stabilityCard.setVisibility(stability?View.VISIBLE:View.GONE);pitchTrace.setSnapshot(data);harmonicsView.setFrame(f);harmonicReadout.setText(f!=null&&f.pitchHz>0?String.format(Locale.ROOT,"H1 %.1f Hz",f.pitchHz):"—");
@@ -336,6 +335,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void afterRename(){
+        LinkedHashSet<String> resolvedSelection=new LinkedHashSet<>();for(String uri:selected)resolvedSelection.add(library.resolve(new Recording(uri,"","","",0,0)).uri);selected.clear();selected.addAll(resolvedSelection);
         queue=library.load("queue");library.save("queue",queue);
         if(player!=null)for(int i=0;i<player.getMediaItemCount();i++){
             MediaItem item=player.getMediaItemAt(i);Recording r=library.resolve(new Recording(item.mediaId,String.valueOf(item.mediaMetadata.title),"",String.valueOf(item.mediaMetadata.artist),0,0));

@@ -17,6 +17,7 @@ public final class PcmAudioFile {
     private boolean codecStarted,muxerStarted,finished,eos;
     private int track=-1;
     private long samples,bytes;
+    private byte[] pcmBytes=new byte[0];
     public PcmAudioFile(ParcelFileDescriptor descriptor,CaptureFormat format)throws IOException{
         this.descriptor=descriptor;this.format=format;
         try{
@@ -31,7 +32,7 @@ public final class PcmAudioFile {
     }
     public void write(short[] pcm,int length)throws IOException{
         if(finished)throw new IOException("录音文件已关闭");
-        if(format==CaptureFormat.WAV){byte[] buffer=new byte[length*2];for(int i=0;i<length;i++){buffer[2*i]=(byte)pcm[i];buffer[2*i+1]=(byte)(pcm[i]>>8);}output.write(buffer);bytes+=buffer.length;samples+=length;return;}
+        if(format==CaptureFormat.WAV){if(pcmBytes.length<length*2)pcmBytes=new byte[length*2];for(int i=0;i<length;i++){pcmBytes[2*i]=(byte)pcm[i];pcmBytes[2*i+1]=(byte)(pcm[i]>>8);}output.write(pcmBytes,0,length*2);bytes+=length*2;samples+=length;return;}
         int offset=0;long deadline=SystemClock.elapsedRealtime()+800;
         while(offset<length){int index=codec.dequeueInputBuffer(10000);if(index<0){drain(false);if(SystemClock.elapsedRealtime()>deadline)throw new IOException("音频编码器输入超时");continue;}
             ByteBuffer input=codec.getInputBuffer(index);if(input==null)throw new IOException("编码器输入不可用");input.clear();input.order(ByteOrder.LITTLE_ENDIAN);int n=Math.min(length-offset,input.remaining()/2);if(n<1)throw new IOException("音频编码器输入缓冲过小");for(int i=0;i<n;i++)input.putShort(pcm[offset+i]);
@@ -40,7 +41,7 @@ public final class PcmAudioFile {
     }
     private void drain(boolean wait)throws IOException{
         long deadline=SystemClock.elapsedRealtime()+(wait?1800:800);
-        while(!eos){int index=codec.dequeueOutputBuffer(info,wait?10000:0);
+        while(!eos){if(SystemClock.elapsedRealtime()>deadline)throw new IOException("音频编码器输出超时");int index=codec.dequeueOutputBuffer(info,wait?10000:0);
             if(index==MediaCodec.INFO_TRY_AGAIN_LATER){if(!wait)return;if(SystemClock.elapsedRealtime()>deadline)throw new IOException("音频编码器结束超时");continue;}
             if(index==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED){if(muxer!=null){if(muxerStarted)throw new IOException("编码格式意外变化");track=muxer.addTrack(codec.getOutputFormat());muxer.start();muxerStarted=true;}continue;}
             if(index<0)continue;

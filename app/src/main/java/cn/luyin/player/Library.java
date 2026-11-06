@@ -154,7 +154,7 @@ public final class Library {
     }
     public Recording importFile(Uri uri,String source) throws Exception {
         String name="导入录音",mime=context.getContentResolver().getType(uri);
-        try(Cursor c=context.getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())name=c.getString(0);}
+        try(Cursor c=context.getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst()&&c.getString(0)!=null)name=c.getString(0);}
         if(!SourceRules.isAudio(name,mime))throw new IOException("请选择音频文件");
         File dir=new File(context.getFilesDir(),"recordings"); if(!dir.exists()&&!dir.mkdirs())throw new IOException("无法创建导入目录");
         File temp=File.createTempFile("import-",".tmp",dir); MessageDigest digest=MessageDigest.getInstance("SHA-256");
@@ -163,6 +163,9 @@ public final class Library {
             while((n=in.read(buf))!=-1){out.write(buf,0,n);digest.update(buf,0,n);}
         } catch(Exception e){temp.delete();throw e;}
         StringBuilder hex=new StringBuilder(); for(byte b:digest.digest())hex.append(String.format(Locale.ROOT,"%02x",b));
+        long duration=0;MediaMetadataRetriever retriever=new MediaMetadataRetriever();
+        try{retriever.setDataSource(temp.getAbsolutePath());duration=Long.parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));}catch(Exception ignored){}finally{try{retriever.release();}catch(Exception ignored){}}
+        synchronized(MUTATION_LOCK){
         File dest=new File(dir,hex+".audio");
         String prior=prefs.getString("hash:"+hex,Uri.fromFile(dest).toString());Recording previous=resolve(new Recording(prior,name,"应用内导入副本",source,0,0));
         List<Recording> imports=rawLoad("imports");
@@ -172,10 +175,9 @@ public final class Library {
         }
         if(prefs.contains("uri:"+Uri.fromFile(dest)))dest=new File(dir,hex+"-"+UUID.randomUUID()+".audio");
         if(dest.exists())temp.delete(); else if(!temp.renameTo(dest)){temp.delete();throw new IOException("保存音频失败");}
-        long duration=0;MediaMetadataRetriever retriever=new MediaMetadataRetriever();
-        try{retriever.setDataSource(dest.getAbsolutePath());duration=Long.parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));}catch(Exception ignored){}finally{retriever.release();}
         Recording row=new Recording(Uri.fromFile(dest).toString(),name,"应用内导入副本",source,duration,System.currentTimeMillis());
         prefs.edit().putString("hash:"+hex,row.uri).apply();unhide(row.uri);for(Recording r:imports)if(r.uri.equals(row.uri))return r;
         imports.add(row);save("imports",imports);return row;
+        }
     }
 }

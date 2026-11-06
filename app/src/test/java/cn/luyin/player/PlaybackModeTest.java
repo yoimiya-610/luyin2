@@ -12,6 +12,13 @@ import static org.junit.Assert.*;
 @Config(sdk=35)
 @androidx.media3.common.util.UnstableApi
 public class PlaybackModeTest {
+    @Test public void pausedErrorDoesNotStartPlaybackAndNegativeIndexIsClamped(){
+        android.content.Context app=RuntimeEnvironment.getApplication();new Library(app).save("queue",java.util.List.of(new Recording("file:///missing.wav","missing","",SourceRules.APP,1,1)));app.getSharedPreferences("playback",0).edit().putInt("index",-8).commit();
+        org.robolectric.android.controller.ServiceController<PlaybackService> controller=Robolectric.buildService(PlaybackService.class).create();try{Player p=controller.get().onGetSession(null).getPlayer();assertEquals(0,p.getCurrentMediaItemIndex());org.robolectric.util.ReflectionHelpers.callInstanceMethod(controller.get(),"handlePlaybackError");assertFalse(p.getPlayWhenReady());}finally{controller.destroy();}
+    }
+    @Test public void repeatedPlaybackErrorsStopAtQueueBound(){
+        android.content.Context app=RuntimeEnvironment.getApplication();new Library(app).save("queue",java.util.List.of(new Recording("file:///a.wav","a","",SourceRules.APP,1,1),new Recording("file:///b.wav","b","",SourceRules.APP,1,1)));org.robolectric.android.controller.ServiceController<PlaybackService> controller=Robolectric.buildService(PlaybackService.class).create();try{Player p=controller.get().onGetSession(null).getPlayer();p.setRepeatMode(Player.REPEAT_MODE_ALL);p.setPlayWhenReady(true);org.robolectric.util.ReflectionHelpers.callInstanceMethod(controller.get(),"handlePlaybackError");org.robolectric.util.ReflectionHelpers.callInstanceMethod(controller.get(),"handlePlaybackError");assertFalse(p.getPlayWhenReady());}finally{controller.destroy();}
+    }
     @Test public void shuffleDoesNotChangeSavedQueueOrder(){
         ExoPlayer p=new ExoPlayer.Builder(RuntimeEnvironment.getApplication()).build();try{
             p.setMediaItems(java.util.List.of(new MediaItem.Builder().setMediaId("a").setUri("file:///a.wav").build(),new MediaItem.Builder().setMediaId("b").setUri("file:///b.wav").build(),new MediaItem.Builder().setMediaId("c").setUri("file:///c.wav").build()));

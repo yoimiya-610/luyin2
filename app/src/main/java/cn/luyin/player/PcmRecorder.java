@@ -19,7 +19,7 @@ public final class PcmRecorder {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final Runnable error,limit,silenced;
     private final AtomicInteger peak=new AtomicInteger();
-    private volatile boolean running,closed;
+    private volatile boolean running,closed,finalized;
     private volatile IOException failure;
     private volatile long durationMs;
     private Thread writer;
@@ -50,9 +50,9 @@ public final class PcmRecorder {
             if(file!=null)file.write(samples,n);capturedSamples+=n;durationMs=capturedSamples*1000/format.sampleRate;analysis.submit(samples,n,format.sampleRate);
             if(file!=null&&file.writtenBytes()>=1024L*1024*1024-16*1024*1024){running=false;main.post(limit);break;}
         }}catch(Exception e){failure=e instanceof IOException?(IOException)e:new IOException(e);running=false;main.post(error);}
-        finally{try{if(file!=null)file.finish();}catch(Exception e){failure=e instanceof IOException?(IOException)e:new IOException(e);main.post(error);}closed=true;}
+        finally{try{if(file!=null)file.finish();finalized=true;}catch(Exception e){failure=e instanceof IOException?(IOException)e:new IOException(e);main.post(error);}closed=true;}
     }
-    public boolean stop()throws IOException{running=false;try{input.stop();}catch(IllegalStateException ignored){}if(writer!=null){try{writer.join(3000);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException(e);}if(writer.isAlive())throw new IOException("音频保存超时");}if(failure!=null)throw failure;return durationMs>0;}
+    public boolean stop()throws IOException{running=false;try{input.stop();}catch(IllegalStateException ignored){}if(writer!=null){try{writer.join(3000);}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException(e);}if(writer.isAlive())throw new IOException("音频保存超时");}if(failure!=null&&!finalized)throw failure;return finalized&&durationMs>0;}
     public int getMaxAmplitude(){return peak.getAndSet(0);}
     public long durationMs(){return durationMs;}
     public void release(){synchronized(PcmRecorder.class){if(released)return;released=true;try{if(!closed&&writer!=null)try{stop();}catch(IOException ignored){}input.release();if(file!=null&&(writer==null||closed))file.abort();analysis.boundary();}finally{if(owner==this)owner=null;}}}
