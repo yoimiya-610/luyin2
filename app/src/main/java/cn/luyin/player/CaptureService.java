@@ -18,10 +18,12 @@ public final class CaptureService extends Service {
     public static volatile boolean running=false;
     private static final WaveformBuffer waveform=new WaveformBuffer(120);
     public static float[] waveformSamples(){return waveform.snapshot();}
+    private static final LiveAnalysis analysis=new LiveAnalysis();
+    public static LiveAnalysis.Snapshot analysisSnapshot(){return analysis.snapshot();}
+    public static void configureAnalysis(boolean enabled,boolean pitch){analysis.configure(enabled,pitch);}
     private static final String CHANNEL="long_recording";
     private static final int NOTIFICATION=2001;
-    private MediaRecorder recorder;
-    private WavRecorder wav;
+    private PcmRecorder pcm;
     private long engineGeneration;
     private ParcelFileDescriptor descriptor;
     private PowerManager.WakeLock wakeLock;
@@ -29,8 +31,8 @@ public final class CaptureService extends Service {
     private Library library;
     private boolean finishing;
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private final Runnable sampleAmplitude=new Runnable(){public void run(){if((recorder!=null||wav!=null)&&journal!=null&&journal.active!=null){try{waveform.add(wav!=null?wav.getMaxAmplitude():recorder.getMaxAmplitude());}catch(IllegalStateException ignored){}handler.postDelayed(this,100);}}};
-    private final Runnable renewWakeLock=new Runnable(){public void run(){if((recorder!=null||wav!=null)&&journal!=null&&journal.active!=null){wakeLock.acquire(10*60*1000L);handler.postDelayed(this,60*1000L);}}};
+    private final Runnable sampleAmplitude=new Runnable(){public void run(){if(pcm!=null&&journal!=null&&journal.active!=null){try{waveform.add(pcm.getMaxAmplitude());}catch(IllegalStateException ignored){}handler.postDelayed(this,100);}}};
+    private final Runnable renewWakeLock=new Runnable(){public void run(){if(pcm!=null&&journal!=null&&journal.active!=null){wakeLock.acquire(10*60*1000L);handler.postDelayed(this,60*1000L);}}};
 
     @Override public void onCreate(){
         super.onCreate();synchronized(CaptureService.class){running=true;}library=new Library(this);
@@ -49,7 +51,7 @@ public final class CaptureService extends Service {
                 recoverSavedSession(this);
                 journal=new CaptureJournal();journal.title=new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+" 长录音";
                 journal.format=CaptureFormat.from(getSharedPreferences("capture_settings",0).getString("format","M4A"));
-                waveform.clear();
+                waveform.clear();analysis.newSession();
                 journal.write(this);
                 if(Build.VERSION.SDK_INT>=30)startForeground(NOTIFICATION,notification(),ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
                 else startForeground(NOTIFICATION,notification());
@@ -79,42 +81,21 @@ public final class CaptureService extends Service {
         journal.ledger.begin(uri.toString());journal.state="recording";journal.message="";journal.activeSince=SystemClock.elapsedRealtime();
         try{
             journal.write(this);descriptor=getContentResolver().openFileDescriptor(uri,"rw");if(descriptor==null)throw new IOException("无法打开录音文件");
-            if(journal.format==CaptureFormat.WAV){
-                final long token=++engineGeneration;
-                wav=new WavRecorder(this,descriptor,()->{if(token==engineGeneration&&!finishing)try{finishSession("WAV 录音发生错误");}catch(Exception e){stopSelf();}},()->{if(token==engineGeneration&&!finishing)try{closeSegment();startSegment();}catch(Exception e){try{finishSession("自动分段失败");}catch(Exception ignored){stopSelf();}}},()->{if(token==engineGeneration&&!finishing)try{closeSegment();journal.state="paused";journal.message="麦克风被占用，已暂停";journal.write(this);updateNotification();}catch(Exception e){stopSelf();}});
-                wav.start();
-            }else{
-            recorder=Build.VERSION.SDK_INT>=31?new MediaRecorder(this):new MediaRecorder();
-            int format=journal.format==CaptureFormat.AAC?MediaRecorder.OutputFormat.AAC_ADTS:journal.format==CaptureFormat.AMR?MediaRecorder.OutputFormat.AMR_NB:MediaRecorder.OutputFormat.MPEG_4;
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);recorder.setOutputFormat(format);
-            recorder.setAudioEncoder(journal.format==CaptureFormat.AMR?MediaRecorder.AudioEncoder.AMR_NB:MediaRecorder.AudioEncoder.AAC);recorder.setAudioSamplingRate(journal.format.sampleRate);recorder.setAudioChannels(1);recorder.setAudioEncodingBitRate(journal.format.bitRate);
-            final MediaRecorder current=recorder;
-            recorder.registerAudioRecordingCallback(getMainExecutor(),new AudioManager.AudioRecordingCallback(){
-                @Override public void onRecordingConfigChanged(List<AudioRecordingConfiguration> configs){
-                    if(current!=recorder||finishing)return;
-                    for(AudioRecordingConfiguration config:configs)if(config.isClientSilenced()){
-                        try{closeSegment();journal.state="paused";journal.message="麦克风被系统或其他应用占用，已暂停；请回到应用确认后继续";journal.write(CaptureService.this);updateNotification();android.widget.Toast.makeText(CaptureService.this,journal.message,android.widget.Toast.LENGTH_LONG).show();}
-                        catch(Exception e){try{finishSession("麦克风被占用，已保存可用片段");}catch(Exception ignored){stopSelf();}}return;
-                    }
-                }
-            });
-            recorder.setOutputFile(descriptor.getFileDescriptor());
-            recorder.setMaxFileSize(1024L*1024*1024);
-            recorder.setOnErrorListener((mr,what,extra)->{if(mr==recorder&&!finishing)try{finishSession("录音设备发生错误，已保存可用片段");}catch(Exception e){stopSelf();}});
-            recorder.setOnInfoListener((mr,what,extra)->{
-                if(mr==recorder&&what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED&&!finishing){try{closeSegment();startSegment();}catch(Exception e){try{finishSession("自动分段失败，已保存可用片段");}catch(Exception ignored){stopSelf();}}}
-            });
-            recorder.prepare();recorder.start();
-            }
+            final long token=++engineGeneration;
+            pcm=new PcmRecorder(this,descriptor,journal.format,analysis,
+                ()->{if(token==engineGeneration&&!finishing)try{finishSession("音频录制发生错误");}catch(Exception e){stopSelf();}},
+                ()->{if(token==engineGeneration&&!finishing)try{closeSegment();startSegment();}catch(Exception e){try{finishSession("自动分段失败");}catch(Exception ignored){stopSelf();}}},
+                ()->{if(token==engineGeneration&&!finishing)try{closeSegment();journal.state="paused";journal.message="麦克风被占用，已暂停";journal.write(this);updateNotification();}catch(Exception e){stopSelf();}});
+            pcm.start();
             journal.activeSince=SystemClock.elapsedRealtime();journal.write(this);wakeLock.acquire(10*60*1000L);handler.postDelayed(renewWakeLock,60*1000L);handler.post(sampleAmplitude);updateNotification();
         }catch(Exception e){releaseRecorder();try{getContentResolver().delete(uri,null,null);}catch(Exception ignored){}journal.ledger.complete(false);journal.active=null;journal.activeSince=0;journal.state="paused";journal.write(this);throw e;}
     }
     private void closeSegment() throws Exception {
         if(journal.active==null)return;
         pruneSaved();
-        Recording segment=journal.active;long elapsed=Math.max(0,SystemClock.elapsedRealtime()-journal.activeSince);boolean stopped=false;
-        try{if(wav!=null)stopped=wav.stop();else if(recorder!=null){recorder.stop();stopped=true;}}catch(Exception ignored){}finally{releaseRecorder();}
-        if(stopped){segment.duration=duration(this,Uri.parse(segment.uri));if(segment.duration<=0)segment.duration=elapsed;}
+        Recording segment=journal.active;long elapsed=Math.max(0,SystemClock.elapsedRealtime()-journal.activeSince);boolean stopped=false;long capturedMs=0;
+        try{if(pcm!=null){stopped=pcm.stop();capturedMs=pcm.durationMs();}}catch(Exception ignored){}finally{releaseRecorder();}
+        if(stopped){segment.duration=duration(this,Uri.parse(segment.uri));if(segment.duration<=0)segment.duration=capturedMs>0?capturedMs:elapsed;}
         if(stopped&&segment.duration>0){
             // Checkpoint the closed file before publishing it. Recovery can safely repeat publishing.
             journal.ledger.complete(true);journal.rows.add(segment);journal.total+=segment.duration;
@@ -164,8 +145,7 @@ public final class CaptureService extends Service {
         engineGeneration++;
         handler.removeCallbacks(sampleAmplitude);
         handler.removeCallbacks(renewWakeLock);
-        if(recorder!=null){try{recorder.release();}catch(Exception ignored){}recorder=null;}
-        if(wav!=null){wav.release();wav=null;}
+        if(pcm!=null){pcm.release();pcm=null;}
         if(descriptor!=null){try{descriptor.close();}catch(Exception ignored){}descriptor=null;}
         if(wakeLock!=null&&wakeLock.isHeld())wakeLock.release();
     }

@@ -1,0 +1,36 @@
+package cn.luyin.player;
+
+import android.content.Context;
+import android.graphics.*;
+import android.view.View;
+
+/** A real time-frequency heatmap, 12 seconds wide. Unmeasured time stays blank. */
+public final class SpectrogramView extends View {
+    private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final RectF bounds=new RectF();
+    private final Path trace=new Path();
+    private final Bitmap bitmap=Bitmap.createBitmap(120,256,Bitmap.Config.ARGB_8888);
+    private final int[] pixels=new int[120*256];
+    private static final int[] COLORS={0xff102f2a,0xff225675,0xff6560a4,0xffc97091,0xfff2b865,0xfffbf3b4};
+    private LiveAnalysis.Snapshot snapshot;
+    private boolean pitch;
+    public SpectrogramView(Context context){super(context);setContentDescription("实时声谱图，横轴时间，纵轴频率，颜色表示 dBFS 幅度");setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);}
+    public void setSnapshot(LiveAnalysis.Snapshot value,boolean pitch){if(snapshot==value&&this.pitch==pitch)return;snapshot=value;this.pitch=pitch;rebuild();invalidate();}
+    private void rebuild(){
+        java.util.Arrays.fill(pixels,0xff102f2a);SoundFrame latest=snapshot==null?null:snapshot.latest();
+        if(latest!=null){double topHz=Math.min(6000,latest.sampleRate/2.0),start=latest.seconds-12;
+            for(SoundFrame f:snapshot.frames){int x=(int)Math.round((f.seconds-start)/12*119);if(x<0||x>=120)continue;
+                for(int y=0;y<256;y++){double hz=(255-y)*topHz/255,half=topHz/510;int low=Math.max(0,(int)Math.floor((hz-half)*f.fftSize/f.sampleRate)),high=Math.min(f.spectrumDb.length-1,(int)Math.ceil((hz+half)*f.fftSize/f.sampleRate));float level=-120;for(int k=low;k<=high;k++)level=Math.max(level,f.spectrumDb[k]);pixels[y*120+x]=color(level);}
+            }
+        }bitmap.setPixels(pixels,0,120,0,0,120,256);
+    }
+    private static int color(float db){float t=Math.max(0,Math.min(1,(db+90)/90f));float p=t*(COLORS.length-1);int i=Math.min(COLORS.length-2,(int)p);float a=p-i;int c=COLORS[i],d=COLORS[i+1];return Color.rgb((int)(Color.red(c)*(1-a)+Color.red(d)*a),(int)(Color.green(c)*(1-a)+Color.green(d)*a),(int)(Color.blue(c)*(1-a)+Color.blue(d)*a));}
+    @Override protected void onDraw(Canvas canvas){
+        super.onDraw(canvas);float dp=getResources().getDisplayMetrics().density;float left=34*dp,top=4*dp,right=getWidth()-5*dp,bottom=getHeight()-24*dp;if(right<=left||bottom<=top)return;
+        bounds.set(left,top,right,bottom);paint.setFilterBitmap(false);canvas.drawBitmap(bitmap,null,bounds,paint);SoundFrame latest=snapshot==null?null:snapshot.latest();double maxHz=latest==null?6000:Math.min(6000,latest.sampleRate/2.0);
+        paint.setTextSize(9*dp);paint.setStrokeWidth(dp);paint.setColor(0xffa8c9ba);
+        for(int i=0;i<=3;i++){float y=bottom-(bottom-top)*i/3;canvas.drawText(i==0?"0":String.format(java.util.Locale.ROOT,"%.1fk",maxHz*i/3000),0,y+3*dp,paint);paint.setColor(0x228cbaac);canvas.drawLine(left,y,right,y,paint);paint.setColor(0xffa8c9ba);}
+        canvas.drawText("-12s",left,getHeight()-5*dp,paint);paint.setTextAlign(Paint.Align.RIGHT);canvas.drawText("0s",right,getHeight()-5*dp,paint);paint.setTextAlign(Paint.Align.CENTER);canvas.drawText("-90 至 0 dBFS",(left+right)/2,getHeight()-5*dp,paint);paint.setTextAlign(Paint.Align.LEFT);
+        if(pitch&&latest!=null){trace.reset();boolean connected=false;long segment=-1;double previous=-100;for(SoundFrame f:snapshot.frames){if(f.pitchHz<=0||f.pitchHz>maxHz){connected=false;continue;}float x=(float)(left+(f.seconds-(latest.seconds-12))/12*(right-left)),y=(float)(bottom-f.pitchHz/maxHz*(bottom-top));if(x<left||x>right){connected=false;continue;}if(!connected||segment!=f.segment||f.seconds-previous>.25)trace.moveTo(x,y);else trace.lineTo(x,y);connected=true;segment=f.segment;previous=f.seconds;}paint.setColor(0xffffffff);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.5f*dp);canvas.drawPath(trace,paint);paint.setStyle(Paint.Style.FILL);}
+    }
+}

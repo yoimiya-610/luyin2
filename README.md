@@ -1,8 +1,21 @@
 # 录音随听
 
-当前版本：**1.3.0**。可用新 APK 直接覆盖安装旧版本，保留原来的导入文件、播放队列和设置。
+当前版本：**1.4.0**。可用新 APK 直接覆盖安装旧版本，保留原来的导入文件、播放队列和设置。
 
-1.3 修复底部导航图标、文字居中和基线对齐，移除页面副标题及常驻操作说明。完整说明集中在各页面右上角的 **使用帮助** 中。
+1.4 加入实时声谱图、音高追踪、泛音和声音稳定性分析、横屏录音室，以及可以实际发声的复音钢琴。录音库来源按钮完整换行，去除按钮原生阴影与固定高度冲突造成的裁切观感。完整说明集中在各页面右上角的 **使用帮助** 中。
+
+## 声谱图、音高与钢琴
+
+- 在录音室点击 **波形 / 声谱图** 自由切换，选择自动保存。两种显示均来自录制时的真实麦克风 PCM，不使用预设动画。“声纹”在这里指声音波形，不做身份识别。
+- 声谱图横轴为最近 12 秒的有效录音时间，纵轴为频率（常规格式 0–6 kHz，AMR 为 0–4 kHz），颜色为 −90 至 0 dBFS 的频谱幅度。开启音高追踪后叠加白色基频轨迹。未采集或分析来不及处理的区域保持空白，不插造数据。
+- **分析设置** 可独立开关音高追踪、泛音分析、稳定性分析。全部关闭且选择波形时停止频谱分析，保留录音。分析在独立线程运行，队列有界，不阻塞录音保存。
+- **音高追踪**：采用 YIN，范围 40–1,800 Hz，显示 Hz、十二平均律音名及相对最近音的音分偏差；A4=440 Hz。低于 −60 dBFS 或周期性置信度不足时显示“—”。适用于单个人声和单音乐器，不提供和弦分离，噪声、失真、混响和缺失基频会影响结果。
+- **泛音分析**：H1 为基频，H2–H8 为对应整数倍频率附近的频谱峰值，显示相对 H1 的 dB；超出奈奎斯特频率或基频不可靠时留空。它不等同于乐器识别或音色评分。
+- **声音稳定性**：最近同一连续片段 5 秒内的有效音高标准差（音分）、非静音帧（高于 −60 dBFS）的 RMS 电平标准差（dB）及有效音高占比；不足 8 个有效帧时相应波动留空。换音、颤音和渐强会自然增大波动，静音通过有效音高占比体现；不作医学诊断或“音质好坏”评分。
+- **横屏**：点击录音室 **横屏**，或允许系统自动旋转后横持手机。横屏隐藏普通标题和底部导航，图表铺满可用宽度；**数据** 打开分析面板，**文件** 返回录音库，**竖屏** 恢复竖向。旋转只重建界面，前台录音服务继续工作。
+- **钢琴**：录音室点 **钢琴** 打开内置双八度键盘，支持多指和弦、滑键、八度切换与音量调整；A4=440 Hz，16 声部，采用带泛音和衰减包络的本地合成音色，无需下载。关闭键盘、切换到后台或丢失音频焦点时停止发声。录音期间可作为参考音，手机扬声器的声音也会被麦克风录入；佩戴耳机可减少串音。
+
+波形、声谱图与分析历史仅存于当前进程内，不写入音频文件，也不支持对旧录音进行离线分析。暂停冻结当前结果，继续时使用新片段计算稳定性；新会话清空历史。
 
 ## 文件夹、多选与删除
 
@@ -36,7 +49,7 @@
 | 页面 | 主要功能 | 次要操作的位置 |
 | --- | --- | --- |
 | 录音库 | 搜索、来源与文件夹筛选、多选、导入 | 更多菜单：移动分类、导出、重命名、删除、修正来源；右上角管理文件夹与授权 |
-| 录音室 | 格式选择、长录音、实时波形、暂停和继续、结束保存整组 | 本次片段列表及整组导出 |
+| 录音室 | 格式选择、长录音、波形/声谱图、暂停和继续、结束保存整组 | 分析设置、钢琴、横屏、本次片段列表及整组导出 |
 | 播放 | 进度、上一段/下一段、顺序/乱序/单曲循环、队列 | “管理队列”保存预设或批量导出；片段菜单上下移动或移出 |
 | 预设 | 查看和载入已经保存的播放顺序 | 预设更多菜单：追加、导出整组、重命名、删除 |
 
@@ -64,7 +77,7 @@
 4. 点击 **结束并保存整组队列**，正在录制的最后一段也会保存，本次全部有效片段会按录制顺序自动保存成一个预设队列。不会覆盖原来的播放队列。
 5. 底部切换到 **预设**，选择本次长录音，载入或直接播放。也可重命名这个预设。
 
-录音室波形使用真实麦克风峰值：压缩格式来自 `MediaRecorder.getMaxAmplitude()`，WAV 来自 AudioRecord 的 PCM 样本。每 100 ms 更新，显示最近约 12 秒的有效录音振幅包络。暂停时停止采样并保留已有波形，继续时追加新样本；开始新会话时清空。波形不是模拟动画，也不是身份识别意义上的声纹或完整频谱，只保留在当前进程内。
+所有格式共用一个 `AudioRecord` 采集 PCM16，同时送入保存与分析，避免两个麦克风客户端互相抢占。M4A/AAC/AMR 使用系统 `MediaCodec` 编码，M4A 使用 `MediaMuxer` 封装；AAC 为 ADTS，AMR 为 AMR-NB 文件，WAV 写入 PCM16 RIFF。波形使用同一 PCM 的真实峰值，每 100 ms 更新，显示最近约 12 秒的有效录音振幅包络。暂停时冻结，继续时追加；新会话清空。分析先抗混叠降采样，再进行 Hann 窗 STFT 和 YIN，约每秒 10 帧；分析分辨率和频段不改变保存文件的采样率。
 
 新录音单独显示为 **本机录音**。红米 K80 上的实际文件保存到共享目录 `Recordings/录音随听/`，默认格式为 M4A，也可按上述选项选择其他格式。Android 10/11 的兼容目录为 `Music/录音随听/`。
 
@@ -132,12 +145,15 @@
 
 源码入口：`app/src/main/java/cn/luyin/player/MainActivity.java`。扫描和导入：`Library.java`。后台播放：`PlaybackService.java`。后台录音：`CaptureService.java`。波形：`WaveformBuffer.java` / `WaveformView.java`。导出：`RecordingExporter.java` / `ExportFiles.java`。
 
-文件夹分类：`FolderStore.java`。删除：`RecordingDeletion.java`。格式定义：`CaptureFormat.java`。WAV 采集与容器：`WavRecorder.java` / `WavHeader.java`。
+文件夹分类：`FolderStore.java`。删除：`RecordingDeletion.java`。格式定义：`CaptureFormat.java`。统一录音：`PcmRecorder.java` / `PcmAudioFile.java`。声学分析：`LiveAnalysis.java` / `AcousticAnalyzer.java` / `PitchDetector.java`。钢琴：`PianoSynth.java` / `PianoPlayer.java` / `PianoKeyboardView.java`。
 
-`scripts/test.ps1` 检查来源、日期编号、分段状态、波形缓冲，以及导出字节完整性、重复片段和超过 999 段的 ZIP 排序。`app/src/test/` 使用 Robolectric 验证 Android 页面导航、页面恢复和 ContentResolver 导出；这些 JVM 测试不等于手机硬件或 GPU 渲染测试。
+`scripts/test.ps1` 检查来源、日期编号、分段状态、波形缓冲、导出、合成信号的音高/频谱/稳定性、ADTS 头及钢琴音符合成。`app/src/test/` 使用 Robolectric 验证页面导航/恢复、图表切换、横屏尺寸、完整筛选按钮、钢琴滑键释放、WAV 实际写入和 ContentResolver 导出；这些 JVM 测试不等于手机硬件或 GPU 渲染测试。
 
 ## 验收建议
 
+- 在红米 K80 上播放或发出持续 A4/440 Hz，检查四种格式下的图谱与基频；静音、噪声、换音、颤音、强二次谐波时核对结果与留空行为。
+- 录制中切换波形/声谱图、关闭再开启分析、横竖旋转、展开数据、弹奏钢琴，确认录音持续且暂停保存片段、预设顺序不变。检查横屏刘海/打孔与手势区域。
+- 用双指弹和弦、滑键、改变八度和音量，检查音符与 Hz、触控延迟、松键衰减、关窗/后台/焦点抢占后无持续音。钢琴音色为合成音，不是原声钢琴采样。
 - 检查底部导航文字在系统自定义字体和放大字号下居中、基线一致；确认所有页面只保留功能标签和必要状态。
 - 创建两个文件夹，把本机、系统和导入录音混合多选移动；重命名文件夹、重命名文件后确认分类不丢失；删除分类后音频仍在。
 - 分别测试仅移出软件、恢复显示、删除本机文件、删除导入副本、系统删除授权允许与取消；确认队列和预设中不再出现已删除片段。
@@ -171,7 +187,9 @@
 - [Android MediaRecorder 录音与前台服务要求](https://developer.android.com/media/platform/mediarecorder)
 - [麦克风前台服务类型与权限](https://developer.android.com/develop/background-work/services/fgs/service-types)
 - [小米录音存储路径及私有目录限制](https://www.mi.com/global/support/article/KA-07847/)
-- [MediaRecorder 麦克风峰值接口](https://developer.android.com/reference/android/media/MediaRecorder#getMaxAmplitude())
+- [AudioRecord PCM 采集](https://developer.android.com/reference/android/media/AudioRecord)
+- [MediaCodec 编码接口](https://developer.android.com/reference/android/media/MediaCodec)
+- [YIN 原论文：de Cheveigné 与 Kawahara，2002](https://pubmed.ncbi.nlm.nih.gov/12002874/)
 - [Android 系统文件选择器与文件创建](https://developer.android.com/training/data-storage/shared/documents-files)
 - [MediaStore 系统删除授权](https://developer.android.com/reference/android/provider/MediaStore#createDeleteRequest(android.content.ContentResolver,%20java.util.Collection%3Candroid.net.Uri%3E))
 - [Media3 播放列表与乱序播放](https://developer.android.com/media/media3/exoplayer/playlists)
