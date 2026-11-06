@@ -29,7 +29,7 @@ public class ReviewRegressionTest {
         File file=new File(app.getCacheDir(),"prefix.wav");LiveAnalysis analysis=new LiveAnalysis();
         try(ParcelFileDescriptor fd=ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_CREATE|ParcelFileDescriptor.MODE_READ_WRITE|ParcelFileDescriptor.MODE_TRUNCATE)){
             StudioAnalysisTest.SameFileDup.file=file;StudioAnalysisTest.SameFileDup.expected=fd.getFileDescriptor();PcmRecorder recorder=new PcmRecorder(app,fd,CaptureFormat.WAV,analysis,()->{},()->{},()->{});
-            try{recorder.start();assertTrue(failed.await(3,TimeUnit.SECONDS));assertTrue("valid prefix survives microphone loss",recorder.stop());assertEquals(100,recorder.durationMs());assertEquals(44+8820,file.length());}finally{recorder.release();}
+            try{recorder.start();assertTrue(failed.await(3,TimeUnit.SECONDS));assertTrue("valid prefix survives microphone loss",recorder.stop());assertEquals(50,recorder.durationMs());assertEquals(44+4410,file.length());}finally{recorder.release();}
         }finally{ShadowAudioRecord.clearSource();analysis.close();}
     }
     @Test public void failedFinalizationIsStillRejected()throws Exception{

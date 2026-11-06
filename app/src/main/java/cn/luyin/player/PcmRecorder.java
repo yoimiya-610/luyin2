@@ -44,7 +44,7 @@ public final class PcmRecorder {
         }
     }
     public void start(){input.startRecording();if(input.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)throw new IllegalStateException("无法开始录制");analysis.boundary();running=true;writer=new Thread(this::writePcm,"PcmCapture");writer.start();}
-    private void writePcm(){short[] samples=new short[format.sampleRate/10];long capturedSamples=0;
+    private void writePcm(){short[] samples=new short[format.sampleRate/20];long capturedSamples=0;
         try{while(running){int n=input.read(samples,0,samples.length,AudioRecord.READ_BLOCKING);if(n<0){if(!running)break;throw new IOException("麦克风读取失败："+n);}if(n==0)continue;
             int maximum=0;for(int i=0;i<n;i++)maximum=Math.max(maximum,Math.min(32767,Math.abs((int)samples[i])));peak.accumulateAndGet(maximum,Math::max);
             if(file!=null)file.write(samples,n);capturedSamples+=n;durationMs=capturedSamples*1000/format.sampleRate;analysis.submit(samples,n,format.sampleRate);

@@ -156,7 +156,7 @@ public final class Library {
         String name="导入录音",mime=context.getContentResolver().getType(uri);
         try(Cursor c=context.getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst()&&c.getString(0)!=null)name=c.getString(0);}
         if(!SourceRules.isAudio(name,mime))throw new IOException("请选择音频文件");
-        File dir=new File(context.getFilesDir(),"recordings"); if(!dir.exists()&&!dir.mkdirs())throw new IOException("无法创建导入目录");
+        File dir=new File(context.getFilesDir(),"recordings"); if(!dir.isDirectory()&&!dir.mkdirs()&&!dir.isDirectory())throw new IOException("无法创建导入目录");
         File temp=File.createTempFile("import-",".tmp",dir); MessageDigest digest=MessageDigest.getInstance("SHA-256");
         try(InputStream in=context.getContentResolver().openInputStream(uri); OutputStream out=new FileOutputStream(temp)) {
             if(in==null)throw new IOException("无法打开音频"); byte[] buf=new byte[65536];int n;

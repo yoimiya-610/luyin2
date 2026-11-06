@@ -9,20 +9,26 @@ public final class SpectrogramView extends View {
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF bounds=new RectF();
     private final Path trace=new Path();
-    private final Bitmap bitmap=Bitmap.createBitmap(120,256,Bitmap.Config.ARGB_8888);
-    private final int[] pixels=new int[120*256];
+    private final Bitmap bitmap=Bitmap.createBitmap(240,256,Bitmap.Config.ARGB_8888);
+    private final int[] pixels=new int[240*256];
     private static final int[] COLORS={0xff102f2a,0xff225675,0xff6560a4,0xffc97091,0xfff2b865,0xfffbf3b4};
     private LiveAnalysis.Snapshot snapshot;
     private boolean pitch;
+    private java.util.IdentityHashMap<SoundFrame,int[]> columns=new java.util.IdentityHashMap<>();
     public SpectrogramView(Context context){super(context);setContentDescription("实时声谱图，横轴时间，纵轴频率，颜色表示 dBFS 幅度");setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);}
     public void setSnapshot(LiveAnalysis.Snapshot value,boolean pitch){if(snapshot==value&&this.pitch==pitch)return;snapshot=value;this.pitch=pitch;rebuild();invalidate();}
     private void rebuild(){
         java.util.Arrays.fill(pixels,0xff102f2a);SoundFrame latest=snapshot==null?null:snapshot.latest();
-        if(latest!=null){double topHz=Math.min(6000,latest.sampleRate/2.0),start=latest.seconds-12;
-            for(SoundFrame f:snapshot.frames){int x=(int)Math.round((f.seconds-start)/12*119);if(x<0||x>=120)continue;
-                for(int y=0;y<256;y++){double hz=(255-y)*topHz/255,half=topHz/510;int low=Math.max(0,(int)Math.floor((hz-half)*f.fftSize/f.sampleRate)),high=Math.min(f.spectrumDb.length-1,(int)Math.ceil((hz+half)*f.fftSize/f.sampleRate));float level=-120;for(int k=low;k<=high;k++)level=Math.max(level,f.spectrumDb[k]);pixels[y*120+x]=color(level);}
+        java.util.IdentityHashMap<SoundFrame,int[]> retained=new java.util.IdentityHashMap<>();
+        if(latest!=null){double start=latest.seconds-12;
+            for(SoundFrame f:snapshot.frames){int x=(int)Math.round((f.seconds-start)/12*239);if(x<0||x>=240)continue;
+                int[] column=columns.get(f);if(column==null)column=column(f);retained.put(f,column);
+                for(int y=0;y<256;y++)pixels[y*240+x]=column[y];
             }
-        }bitmap.setPixels(pixels,0,120,0,0,120,256);
+        }columns=retained;bitmap.setPixels(pixels,0,240,0,0,240,256);
+    }
+    private int[] column(SoundFrame f){int[] result=new int[256];double topHz=Math.min(6000,f.sampleRate/2.0);
+        for(int y=0;y<256;y++){double hz=(255-y)*topHz/255,half=topHz/510;int low=Math.max(0,(int)Math.floor((hz-half)*f.fftSize/f.sampleRate)),high=Math.min(f.spectrumDb.length-1,(int)Math.ceil((hz+half)*f.fftSize/f.sampleRate));float level=-120;for(int k=low;k<=high;k++)level=Math.max(level,f.spectrumDb[k]);result[y]=color(level);}return result;
     }
     private static int color(float db){float t=Math.max(0,Math.min(1,(db+90)/90f));float p=t*(COLORS.length-1);int i=Math.min(COLORS.length-2,(int)p);float a=p-i;int c=COLORS[i],d=COLORS[i+1];return Color.rgb((int)(Color.red(c)*(1-a)+Color.red(d)*a),(int)(Color.green(c)*(1-a)+Color.green(d)*a),(int)(Color.blue(c)*(1-a)+Color.blue(d)*a));}
     @Override protected void onDraw(Canvas canvas){

@@ -10,7 +10,7 @@ public final class WaveformView extends View {
     private float[] samples=new float[0];
     private boolean recording;
     public WaveformView(Context context){super(context);setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);setContentDescription("实时录音声音波形，尚未开始录音");}
-    public void setSamples(float[] values,boolean active){samples=values;recording=active;setContentDescription(active?"实时麦克风声音波形":"声音波形已暂停");invalidate();}
+    public void setSamples(float[] values,boolean active){if(recording==active&&java.util.Arrays.equals(samples,values))return;samples=values;recording=active;setContentDescription(active?"实时麦克风声音波形":"声音波形已暂停");invalidate();}
     @Override protected void onDraw(Canvas canvas){
         super.onDraw(canvas);float density=getResources().getDisplayMetrics().density;
         float left=4*density,right=getWidth()-4*density,center=getHeight()*.45f,span=getHeight()*.33f;

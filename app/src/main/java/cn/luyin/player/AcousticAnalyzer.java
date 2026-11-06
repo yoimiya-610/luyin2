@@ -24,8 +24,8 @@ public final class AcousticAnalyzer {
             for(int t=0;t<coefficients.length;t++)value+=coefficients[t]*firDelay[(firIndex-1-t+firDelay.length)%firDelay.length];
             signal[next]=value;next=(next+1)%signal.length;count=Math.min(signal.length,count+1);hop++;
             double seconds=endSeconds-(length-i-1)/(double)sampleRate;
-            if(count==signal.length&&hop>=rate/10&&(lastFrameSeconds<0||seconds-lastFrameSeconds>=.099)){
-                hop=0;lastFrameSeconds=seconds;SoundFrame frame=analyze(seconds,needPitch);history.add(frame);while(!history.isEmpty()&&(history.size()>125||history.get(0).seconds<seconds-12))history.remove(0);
+            if(count==signal.length&&hop>=rate/20&&(lastFrameSeconds<0||seconds-lastFrameSeconds>=.049)){
+                hop=0;lastFrameSeconds=seconds;SoundFrame frame=analyze(seconds,needPitch);history.add(frame);while(!history.isEmpty()&&(history.size()>245||history.get(0).seconds<seconds-12))history.remove(0);
             }
         }
     }
