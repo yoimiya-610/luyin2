@@ -20,7 +20,10 @@ public final class CaptureService extends Service {
     public static float[] waveformSamples(){return waveform.snapshot();}
     private static final LiveAnalysis analysis=new LiveAnalysis();
     public static LiveAnalysis.Snapshot analysisSnapshot(){return analysis.snapshot();}
-    public static void configureAnalysis(boolean enabled,boolean pitch){analysis.configure(enabled,pitch);}
+    private static CaptureService activeService;
+    private static boolean visualizationEnabled;
+    public static void configureAnalysis(boolean enabled,boolean pitch){configureAnalysis(enabled,pitch,enabled);}
+    public static void configureAnalysis(boolean enabled,boolean pitch,boolean visible){analysis.configure(enabled,pitch);visualizationEnabled=visible;if(activeService!=null){activeService.handler.removeCallbacks(activeService.sampleAmplitude);if(visible&&activeService.pcm!=null)activeService.handler.post(activeService.sampleAmplitude);}}
     private static final String CHANNEL="long_recording";
     private static final int NOTIFICATION=2001;
     private PcmRecorder pcm;
@@ -31,11 +34,11 @@ public final class CaptureService extends Service {
     private Library library;
     private boolean finishing;
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private final Runnable sampleAmplitude=new Runnable(){public void run(){if(pcm!=null&&journal!=null&&journal.active!=null){try{waveform.add(pcm.getMaxAmplitude());}catch(IllegalStateException ignored){}handler.postDelayed(this,100);}}};
+    private final Runnable sampleAmplitude=new Runnable(){public void run(){if(visualizationEnabled&&pcm!=null&&journal!=null&&journal.active!=null){try{waveform.add(pcm.getMaxAmplitude());}catch(IllegalStateException ignored){}handler.postDelayed(this,100);}}};
     private final Runnable renewWakeLock=new Runnable(){public void run(){if(pcm!=null&&journal!=null&&journal.active!=null){wakeLock.acquire(10*60*1000L);handler.postDelayed(this,60*1000L);}}};
 
     @Override public void onCreate(){
-        super.onCreate();synchronized(CaptureService.class){running=true;}library=new Library(this);
+        super.onCreate();activeService=this;synchronized(CaptureService.class){running=true;}library=new Library(this);
         NotificationManager manager=getSystemService(NotificationManager.class);
         manager.createNotificationChannel(new NotificationChannel(CHANNEL,"长录音",NotificationManager.IMPORTANCE_LOW));
         wakeLock=((PowerManager)getSystemService(POWER_SERVICE)).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"RecordingFlow:Capture");
@@ -164,6 +167,6 @@ public final class CaptureService extends Service {
     @Override public IBinder onBind(Intent intent){return null;}
     @Override public void onDestroy(){
         if(journal!=null&&!journal.state.equals("finished"))try{finishSession("录音服务已停止，已保存可用片段");}catch(Exception ignored){}
-        releaseRecorder();running=false;super.onDestroy();
+        releaseRecorder();if(activeService==this)activeService=null;running=false;super.onDestroy();
     }
 }

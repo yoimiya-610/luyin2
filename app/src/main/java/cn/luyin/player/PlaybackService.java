@@ -16,7 +16,7 @@ public final class PlaybackService extends MediaSessionService {
     public static void pauseForCapture(){if(active!=null&&active.player!=null)active.player.pause();}
     public static void removeHidden(){if(active==null||active.player==null)return;Library library=new Library(active);for(int i=active.player.getMediaItemCount()-1;i>=0;i--)if(library.isHidden(active.player.getMediaItemAt(i).mediaId))active.player.removeMediaItem(i);}
     private final android.os.Handler handler=new android.os.Handler(android.os.Looper.getMainLooper());
-    private final Runnable checkpoint=new Runnable(){public void run(){savePosition();handler.postDelayed(this,5000);}};
+    private final Runnable checkpoint=new Runnable(){public void run(){if(player!=null&&player.isPlaying()){savePosition();handler.postDelayed(this,5000);}}};
     @Override public void onCreate() {
         super.onCreate();
         player=new ExoPlayer.Builder(this).build();
@@ -29,14 +29,15 @@ public final class PlaybackService extends MediaSessionService {
         player.setRepeatMode(prefs.getBoolean("repeat",false)?Player.REPEAT_MODE_ONE:Player.REPEAT_MODE_OFF);
         player.setShuffleModeEnabled(prefs.getBoolean("shuffle",false));
         player.addListener(new Player.Listener(){
-            @Override public void onEvents(Player p,Player.Events events){savePosition();}
+            @Override public void onEvents(Player p,Player.Events events){savePosition();scheduleCheckpoint();}
             @Override public void onPlaybackStateChanged(int state){if(state==Player.STATE_READY)consecutiveErrors=0;}
             @Override public void onPlayerError(PlaybackException error){handlePlaybackError();}
         });
         PendingIntent intent=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class).putExtra("page","player"),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         session=new MediaSession.Builder(this,player).setSessionActivity(intent).build();
-        handler.post(checkpoint);
+        scheduleCheckpoint();
     }
+    private void scheduleCheckpoint(){handler.removeCallbacks(checkpoint);if(player!=null&&player.isPlaying())handler.postDelayed(checkpoint,5000);}
     private void handlePlaybackError(){
         if(!player.getPlayWhenReady())return;
         if(++consecutiveErrors>=player.getMediaItemCount()||!player.hasNextMediaItem()){player.pause();return;}
