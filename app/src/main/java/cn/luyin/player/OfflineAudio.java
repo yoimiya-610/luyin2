@@ -26,8 +26,10 @@ final class OfflineAudio {
                 extractor.setDataSource(source);
             }
             MediaFormat track = selectAudio(extractor);
-            long origin = extractor.getSampleTime();
-            if (origin < 0) throw new IOException("Empty audio track");
+            if (extractor.getSampleTrackIndex() < 0) throw new IOException("Empty audio track");
+            long firstTimestampUs = extractor.getSampleTime();
+            // A valid packet can precede time zero, for example AAC encoder priming in M4A.
+            long origin = Math.max(0, firstTimestampUs);
             long durationUs = track.getLong(MediaFormat.KEY_DURATION, 0);
             if (durationUs <= 0 && fallbackMs > 0 && fallbackMs <= Long.MAX_VALUE / 1000) {
                 durationUs = fallbackMs * 1000;
@@ -40,7 +42,7 @@ final class OfflineAudio {
             String mime = track.getString(MediaFormat.KEY_MIME);
             boolean eof = MediaFormat.MIMETYPE_AUDIO_RAW.equals(mime)
                     ? readRaw(extractor, window, track, origin)
-                    : decode(extractor, window, track, mime, origin);
+                    : decode(extractor, window, track, mime, firstTimestampUs, origin);
             if (!window.hasAudio()) throw new IOException("No audio in requested window");
             return window.finish(durationUs, eof);
         } finally {
@@ -66,8 +68,8 @@ final class OfflineAudio {
         PcmFormat format = new PcmFormat(track);
         while (true) {
             checkInterrupted();
+            if (extractor.getSampleTrackIndex() < 0) return true;
             long timestamp = extractor.getSampleTime();
-            if (timestamp < 0) return true;
             if (timestamp - origin >= window.limitUs()) return false;
             long size = extractor.getSampleSize();
             if (size > 1024 * 1024) throw new IOException("PCM packet too large");
@@ -81,8 +83,10 @@ final class OfflineAudio {
         }
     }
 
-    private static boolean decode(MediaExtractor extractor, AnalysisWindow window, MediaFormat track, String mime, long origin)
-            throws IOException, InterruptedException {
+    private static boolean decode(MediaExtractor extractor, AnalysisWindow window, MediaFormat track, String mime,
+            long firstTimestampUs, long origin) throws IOException, InterruptedException {
+        // Keep input timestamps nonnegative for the codec, then restore the recording timeline.
+        long prerollUs = origin - firstTimestampUs;
         MediaCodec codec = MediaCodec.createDecoderByType(mime);
         try {
             codec.configure(track, null, null, 0);
@@ -96,7 +100,7 @@ final class OfflineAudio {
                 if (!inputEnded) {
                     int input = codec.dequeueInputBuffer(0);
                     if (input >= 0) {
-                        inputEnded = feed(extractor, codec, input, origin);
+                        inputEnded = feed(extractor, codec, input, firstTimestampUs);
                         lastProgress = System.nanoTime();
                     }
                 }
@@ -107,12 +111,13 @@ final class OfflineAudio {
                 } else if (output >= 0) {
                     try {
                         if (info.size > 0 && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                            if (info.presentationTimeUs >= window.limitUs()) return false;
+                            long timeUs = info.presentationTimeUs - prerollUs;
+                            if (timeUs >= window.limitUs()) return false;
                             if (pcm == null) pcm = new PcmFormat(codec.getOutputFormat(output));
                             ByteBuffer buffer = codec.getOutputBuffer(output);
                             if (buffer == null) throw new IOException("Missing decoded PCM");
                             buffer.limit(info.offset + info.size).position(info.offset);
-                            pcm.accept(window, buffer, info.presentationTimeUs);
+                            pcm.accept(window, buffer, timeUs);
                         }
                         if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) return true;
                     } finally {
@@ -128,12 +133,12 @@ final class OfflineAudio {
         }
     }
 
-    private static boolean feed(MediaExtractor extractor, MediaCodec codec, int index, long origin) throws IOException {
-        long timestamp = extractor.getSampleTime();
-        if (timestamp < 0) {
+    private static boolean feed(MediaExtractor extractor, MediaCodec codec, int index, long firstTimestampUs) throws IOException {
+        if (extractor.getSampleTrackIndex() < 0) {
             codec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
             return true;
         }
+        long timestamp = extractor.getSampleTime();
         ByteBuffer input = codec.getInputBuffer(index);
         int flags = extractor.getSampleFlags();
         if (input == null || (flags & MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0
@@ -144,7 +149,7 @@ final class OfflineAudio {
         int size = extractor.readSampleData(input, 0);
         if (size < 0) throw new IOException("Could not read audio packet");
         int codecFlags = (flags & MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME) == 0 ? 0 : MediaCodec.BUFFER_FLAG_PARTIAL_FRAME;
-        codec.queueInputBuffer(index, 0, size, timestamp - origin, codecFlags);
+        codec.queueInputBuffer(index, 0, size, timestamp - firstTimestampUs, codecFlags);
         extractor.advance();
         return false;
     }

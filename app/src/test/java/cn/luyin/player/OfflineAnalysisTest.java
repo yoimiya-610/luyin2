@@ -67,7 +67,49 @@ public class OfflineAnalysisTest {
         assertEquals(20_000, result.durationUs);
         assertEquals(20_000, result.endUs);
         assertEquals(.5f, result.peaks[0], .0001f);
-        assertTrue(result.frames.isEmpty());
+        assertEquals(1, result.frames.size());
+        assertEquals(0, result.frames.get(0).pitchHz, 0);
+    }
+
+    @Test public void shortToneProducesSpectrumAndSelectsTheMeasuredFrame() throws Exception {
+        AnalysisWindow window = new AnalysisWindow(0, 180_000);
+        addTone(window, 1440, 0, 0);
+        AnalysisWindow.Result result = window.finish(180_000, true);
+
+        assertEquals(1, result.frames.size());
+        SoundFrame frame = result.frameAt(result.initialCursorSeconds());
+        assertNotNull(frame);
+        assertEquals(440, frame.pitchHz, 2);
+        assertTrue(frame.spectrumDb[(int) Math.round(440.0 * frame.fftSize / frame.sampleRate)] > -20);
+    }
+
+    @Test public void decodedTimestampJitterDoesNotResetTheAnalysisForEveryPacket() throws Exception {
+        AnalysisWindow window = new AnalysisWindow(0, 2_000_000);
+        for (int i = 0; i < 100; i++) {
+            long timestamp = i == 1 ? 0 : i * 20_000L + (i % 2 == 0 ? 0 : 8_000);
+            addTone(window, 160, i * 160, timestamp);
+        }
+        AnalysisWindow.Result result = window.finish(2_000_000, true);
+        assertEquals(2_000_000, result.endUs);
+        assertTrue(result.frames.size() >= 30);
+        assertEquals(440, result.frameAt(1).pitchHz, 2);
+    }
+
+    @Test public void initialCursorFindsVoicedAudioWhenWindowMiddleIsSilent() throws Exception {
+        AnalysisWindow window = new AnalysisWindow(0, 2_000_000);
+        addTone(window, 4800, 0, 0);
+        window.accept(() -> (short) 0, 11200, 1, 8000, 600_000);
+        AnalysisWindow.Result result = window.finish(2_000_000, true);
+
+        assertEquals(0, result.frameAt(1).pitchHz, 0);
+        assertEquals(440, result.frameAt(result.initialCursorSeconds()).pitchHz, 2);
+    }
+
+    private static void addTone(AnalysisWindow window, int count, int offset, long timestamp) throws InterruptedException {
+        short[] samples = new short[count];
+        for (int i = 0; i < count; i++) samples[i] = (short) (16000 * Math.sin(2 * Math.PI * 440 * (offset + i) / 8000));
+        int[] index = {0};
+        window.accept(() -> samples[index[0]++], count, 1, 8000, timestamp);
     }
 
     @Test public void pcmAnalysisRespondsToCancellation() {

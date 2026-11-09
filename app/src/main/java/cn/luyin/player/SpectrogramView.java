@@ -42,7 +42,8 @@ public final class SpectrogramView extends View {
         if(span>0){
             for(SoundFrame f:frames){
                 double half=window==null?0:.03;
-                int first=Math.max(0,(int)Math.round((f.seconds-half-start)/span*239));
+                double before=window!=null&&frames.size()==1?Math.max(half,f.fftSize/(double)f.sampleRate):half;
+                int first=Math.max(0,(int)Math.round((f.seconds-before-start)/span*239));
                 int last=Math.min(239,(int)Math.round((f.seconds+half-start)/span*239));
                 if(last<first)continue;
                 int[] column=columns.get(f);if(column==null)column=column(f,topHz(window==null?f:latest));retained.put(f,column);

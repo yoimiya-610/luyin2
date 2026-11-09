@@ -25,13 +25,24 @@ public final class AcousticAnalyzer {
             signal[next]=value;next=(next+1)%signal.length;count=Math.min(signal.length,count+1);hop++;
             double seconds=endSeconds-(length-i-1)/(double)sampleRate;
             if(count==signal.length&&hop>=rate/20&&(lastFrameSeconds<0||seconds-lastFrameSeconds>=.049)){
-                hop=0;lastFrameSeconds=seconds;SoundFrame frame=analyze(seconds,needPitch);history.add(frame);while(!history.isEmpty()&&(history.size()>245||history.get(0).seconds<seconds-12))history.remove(0);
+                hop=0;lastFrameSeconds=seconds;remember(analyze(seconds,needPitch,signal.length));
             }
         }
     }
-    private SoundFrame analyze(double seconds,boolean needPitch){
-        int n=signal.length;double[] samples=new double[n],real=new double[n],imag=new double[n];double mean=0;
-        for(int i=0;i<n;i++){samples[i]=signal[(next+i)%n];mean+=samples[i];}mean/=n;double power=0,windowSum=0;
+    void finishShortFrame(double endSeconds) {
+        if (lastFrameSeconds < 0 && count >= 32) {
+            remember(analyze(endSeconds, true, Integer.highestOneBit(count)));
+            lastFrameSeconds = endSeconds;
+        }
+    }
+    private void remember(SoundFrame frame){
+        history.add(frame);
+        while(history.size()>245||history.get(0).seconds<frame.seconds-12)history.remove(0);
+    }
+    private SoundFrame analyze(double seconds,boolean needPitch,int n){
+        double[] samples=new double[n],real=new double[n],imag=new double[n];double mean=0;
+        int start=(next+signal.length-n)%signal.length;
+        for(int i=0;i<n;i++){samples[i]=signal[(start+i)%signal.length];mean+=samples[i];}mean/=n;double power=0,windowSum=0;
         for(int i=0;i<n;i++){samples[i]-=mean;power+=samples[i]*samples[i];double window=.5-.5*Math.cos(2*Math.PI*i/(n-1));windowSum+=window;real[i]=samples[i]*window;}
         double rms=20*Math.log10(Math.max(1e-6,Math.sqrt(power/n)));AudioFft.forward(real,imag);float[] spectrum=new float[n/2+1];double[] amplitudes=new double[spectrum.length];
         for(int k=0;k<spectrum.length;k++){amplitudes[k]=Math.hypot(real[k],imag[k])*(k==0||k==n/2?1:2)/windowSum;spectrum[k]=(float)(20*Math.log10(Math.max(1e-6,amplitudes[k])));}

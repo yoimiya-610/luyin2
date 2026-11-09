@@ -31,7 +31,7 @@ public final class OfflineAnalysisActivity extends Activity {
     private static final int SEEK_STEPS = 1000;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private Future<?> pending;
-    private int generation, page, cursorProgress = SEEK_STEPS / 2;
+    private int generation, page, cursorProgress = -1;
     private long durationUs;
     private boolean spectrum = true, dragging, active;
     private AnalysisWindow.Result result;
@@ -59,7 +59,7 @@ public final class OfflineAnalysisActivity extends Activity {
         durationUs = durationMs > 0 && durationMs <= Long.MAX_VALUE / 1000 ? durationMs * 1000 : 0;
         if (saved != null) {
             page = saved.getInt("page");
-            cursorProgress = saved.getInt("cursor");
+            cursorProgress = saved.getInt("cursor", -1);
             spectrum = saved.getBoolean("spectrum");
             durationUs = saved.getLong("duration");
         }
@@ -215,7 +215,7 @@ public final class OfflineAnalysisActivity extends Activity {
             return;
         }
         page = target;
-        cursorProgress = SEEK_STEPS / 2;
+        cursorProgress = -1;
         load();
     }
 
@@ -241,7 +241,8 @@ public final class OfflineAnalysisActivity extends Activity {
             } catch (SecurityException | FileNotFoundException e) {
                 runOnUiThread(() -> fail(request, "无法读取录音，请检查文件是否仍在原处或重新授权。"));
             } catch (Exception e) {
-                runOnUiThread(() -> fail(request, "无法分析这个时间窗。文件可能已损坏，或手机暂不支持此音频格式。"));
+                android.util.Log.w("OfflineAnalysis", "Could not analyze window: " + e.getClass().getSimpleName());
+                runOnUiThread(() -> fail(request, "这个时间窗解码失败，请重试。"));
             }
         });
     }
@@ -262,6 +263,11 @@ public final class OfflineAnalysisActivity extends Activity {
         waveform.setWindow(value);
         spectrogram.setWindow(value);
         pitch.setWindow(value);
+        if (cursorProgress < 0) {
+            long span = Math.max(1, value.endUs - value.startUs);
+            double offset = value.initialCursorSeconds() * 1_000_000 - value.startUs;
+            cursorProgress = (int) Math.max(0, Math.min(SEEK_STEPS, Math.round(offset * SEEK_STEPS / span)));
+        }
         cursor.setProgress(cursorProgress);
         showCursor();
         charts.setVisibility(View.VISIBLE);
@@ -326,8 +332,10 @@ public final class OfflineAnalysisActivity extends Activity {
         spectrogram.setCursor(seconds);
         pitch.setCursor(seconds);
         SoundFrame frame = result.frameAt(seconds);
-        pitchValue.setText(frame == null || frame.pitchHz <= 0 ? "— Hz" : String.format(Locale.ROOT,
-                "%.1f Hz  %s  %+.0f 音分", frame.pitchHz, PitchDetector.note(frame.pitchHz), PitchDetector.noteCents(frame.pitchHz)));
+        if (frame == null) pitchValue.setText("此位置没有分析数据");
+        else if (frame.pitchHz <= 0) pitchValue.setText("未检测到有效音高");
+        else pitchValue.setText(String.format(Locale.ROOT, "%.1f Hz  %s  %+.0f 音分",
+                frame.pitchHz, PitchDetector.note(frame.pitchHz), PitchDetector.noteCents(frame.pitchHz)));
         harmonics.setFrame(frame);
         StabilityMetrics metrics = frame == null ? null : frame.stability;
         stability.setText(getString(R.string.analysis_stability_values,
