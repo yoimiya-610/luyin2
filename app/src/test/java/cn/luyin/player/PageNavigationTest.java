@@ -38,4 +38,16 @@ public class PageNavigationTest {
     @Test public void navigationLabelsCenterBelowIconsOnOneBaseline(){int baseline=-1;for(String name:new String[]{"录音库","录音室","播放","预设"}){ViewGroup item=(ViewGroup)description(root,name+"页面");TextView label=null;IconView icon=null;for(int i=0;i<item.getChildCount();i++){if(item.getChildAt(i)instanceof TextView)label=(TextView)item.getChildAt(i);if(item.getChildAt(i)instanceof IconView)icon=(IconView)item.getChildAt(i);}assertNotNull(label);assertNotNull(icon);assertEquals(Gravity.CENTER_HORIZONTAL,label.getGravity()&Gravity.HORIZONTAL_GRAVITY_MASK);int[] labelAt=new int[2],iconAt=new int[2];label.getLocationOnScreen(labelAt);icon.getLocationOnScreen(iconAt);assertEquals(labelAt[0]+label.getWidth()/2,iconAt[0]+icon.getWidth()/2,1);int b=labelAt[1]+label.getBaseline();if(baseline<0)baseline=b;else assertEquals(baseline,b);}}
     @Test public void permanentPagesDoNotContainInstructionalSubtitles(){assertNull(text(root,"整理声音，按你的顺序听。"));assertNull(text(root,"录音随听  /  LOCAL AUDIO"));navigate("预设");assertNull(text(root,"把常听的顺序，留给下一次。"));navigate("播放");assertNull(text(root,"点片段播放，点更多调整顺序或导出。"));}
     @Test public void chosenRecordingFormatPersists(){navigate("录音室");View format=text(root,"M4A / AAC");assertNotNull(format);format.performClick();android.app.AlertDialog dialog=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();dialog.getListView().performItemClick(dialog.getListView().getAdapter().getView(3,null,dialog.getListView()),3,3);assertEquals("WAV",activity.getSharedPreferences("capture_settings",0).getString("format",null));layout();assertNotNull(text(root,"WAV / PCM"));}
+    @Test public void savedRecordingMenuOpensOfflineAnalysisForThatRecording(){
+        Recording row=new Recording("file:///test.wav","分析测试","",SourceRules.APP,12000,0);
+        org.robolectric.util.ReflectionHelpers.callInstanceMethod(activity,"recordingActions",
+                org.robolectric.util.ReflectionHelpers.ClassParameter.from(Recording.class,row));
+        ListView menu=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().getListView();
+        int last=menu.getCount()-1;
+        assertEquals("离线分析",menu.getAdapter().getItem(last));
+        menu.performItemClick(menu.getAdapter().getView(last,null,menu),last,last);
+        android.content.Intent opened=Shadows.shadowOf(activity).getNextStartedActivity();
+        assertEquals(OfflineAnalysisActivity.class.getName(),opened.getComponent().getClassName());
+        assertEquals(row.uri,opened.getStringExtra("recording_uri"));
+    }
 }

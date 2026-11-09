@@ -1,0 +1,6 @@
+<resources>
+    <string name="analysis_window_range">时间窗 %1$s–%2$s</string>
+    <string name="analysis_window_range_total">时间窗 %1$s–%2$s / %3$s</string>
+    <string name="analysis_cursor_position">分析位置 %1$s</string>
+    <string name="analysis_stability_values">音高波动 %1$s\n非静音响度波动 %2$s\n有效音高 %3$s</string>
+</resources>

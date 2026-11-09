@@ -13,6 +13,7 @@
             <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="audio/*"/></intent-filter>
             <intent-filter><action android:name="android.intent.action.SEND_MULTIPLE"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="audio/*"/></intent-filter>
         </activity>
+        <activity android:name=".OfflineAnalysisActivity" android:exported="false"/>
         <service android:name=".PlaybackService" android:foregroundServiceType="mediaPlayback" android:exported="false">
             <intent-filter><action android:name="androidx.media3.session.MediaSessionService"/></intent-filter>
         </service>
