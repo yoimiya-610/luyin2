@@ -11,6 +11,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.*;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.*;
+import org.robolectric.util.ReflectionHelpers;
 import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
@@ -41,6 +42,45 @@ public class StudioAnalysisTest {
     @Test public void spectrogramReusesMeasuredColumnsAndEvictsOldOnes(){SpectrogramView view=new SpectrogramView(activity);SoundFrame a=spectrumFrame(1),b=spectrumFrame(1.05);view.setSnapshot(new LiveAnalysis.Snapshot(1,List.of(a)),false);Map<SoundFrame,int[]> first=org.robolectric.util.ReflectionHelpers.getField(view,"columns");int[] cached=first.get(a);view.setSnapshot(new LiveAnalysis.Snapshot(1,List.of(a,b)),true);Map<SoundFrame,int[]> next=org.robolectric.util.ReflectionHelpers.getField(view,"columns");assertSame(cached,next.get(a));assertEquals(2,next.size());android.graphics.Bitmap bitmap=org.robolectric.util.ReflectionHelpers.getField(view,"bitmap");assertEquals(240,bitmap.getWidth());view.setSnapshot(new LiveAnalysis.Snapshot(2,Collections.emptyList()),false);assertTrue(((Map<?,?>)org.robolectric.util.ReflectionHelpers.getField(view,"columns")).isEmpty());}
     @Test public void renamingRedirectsSelectionAndRefreshRemainsSafe(){java.util.Set<String> selected=org.robolectric.util.ReflectionHelpers.getField(activity,"selected");selected.add("file:///old.wav");activity.getSharedPreferences("library",0).edit().putString("uri:file:///old.wav","file:///new.wav").commit();org.robolectric.util.ReflectionHelpers.callInstanceMethod(activity,"afterRename");assertTrue(selected.contains("file:///new.wav"));assertFalse(selected.contains("file:///old.wav"));studio();org.robolectric.util.ReflectionHelpers.callInstanceMethod(activity,"updateCapture");}
     @Test public void unchangedGraphModeReusesButtonBackground(){studio();org.robolectric.util.ReflectionHelpers.callInstanceMethod(activity,"updateAnalysis");android.graphics.drawable.Drawable original=find(root,"波形").getBackground();org.robolectric.util.ReflectionHelpers.callInstanceMethod(activity,"updateAnalysis");assertSame(original,find(root,"波形").getBackground());}
+    @Test public void varyingHarmonicsAndPitchKeepStudioBoundsStable(){
+        studio();
+        TextView pitch=ReflectionHelpers.getField(activity,"pitchReadout");
+        pitch.setTextSize(28);
+        HarmonicsView graph=type(root,HarmonicsView.class);
+        View stability=ReflectionHelpers.getField(activity,"stabilityCard");
+        View clips=ReflectionHelpers.getField(activity,"studioClips");
+        LiveAnalysis analysis=ReflectionHelpers.getStaticField(CaptureService.class,"analysis");
+        LiveAnalysis.Snapshot original=analysis.snapshot();
+        try{
+            setAnalysisFrame(analysis,0,Float.NaN);
+            layout(960,2400);
+            List<android.graphics.Rect> expected=locations(graph,stability,clips,pitch);
+            for(int i=0;i<8;i++){
+                double hz=i%2==0?1108.73:0;
+                SoundFrame frame=setAnalysisFrame(analysis,hz,i%2==0?-5:-55);
+                layout(960,2400);
+                assertEquals(expected,locations(graph,stability,clips,pitch));
+                assertSame(frame,ReflectionHelpers.getField(graph,"frame"));
+                assertEquals(1,pitch.getLineCount());
+            }
+        }finally{ReflectionHelpers.setField(analysis,"snapshot",original);}
+    }
+    private SoundFrame setAnalysisFrame(LiveAnalysis analysis,double hz,float harmonic){
+        float[] db=new float[8];Arrays.fill(db,harmonic);
+        StabilityMetrics stability=hz>0?StabilityMetrics.measure(Collections.nCopies(8,spectrumFrame(1)),1,2,hz,-9):null;
+        SoundFrame frame=new SoundFrame(1,2,8000,2048,hz,1,-9,new float[1025],db,stability);
+        ReflectionHelpers.setField(analysis,"snapshot",new LiveAnalysis.Snapshot(1,List.of(frame)));
+        ReflectionHelpers.callInstanceMethod(activity,"updateAnalysis");
+        return frame;
+    }
+    private static List<android.graphics.Rect> locations(View... views){
+        List<android.graphics.Rect> bounds=new ArrayList<>();
+        for(View view:views){
+            int[] at=new int[2];view.getLocationInWindow(at);
+            bounds.add(new android.graphics.Rect(at[0],at[1],at[0]+view.getWidth(),at[1]+view.getHeight()));
+        }
+        return bounds;
+    }
     private void chooseNotes(View panel,boolean notes){find(panel,"切换音高轨迹坐标").performClick();android.app.AlertDialog d=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();int at=notes?1:0;d.getListView().performItemClick(d.getListView().getAdapter().getView(at,null,d.getListView()),at,at);}
     @Test public void scientificPitchAxisSwitchesAndPersistsAcrossRecreation(){studio();PitchTraceView trace=type(root,PitchTraceView.class);int oldHeight=trace.getLayoutParams().height;chooseNotes(root,true);assertTrue(trace.isNoteAxis());assertTrue(trace.getLayoutParams().height>oldHeight);assertNotNull(find(root,"坐标：音名"));assertTrue(activity.getSharedPreferences("analysis_settings",0).getBoolean("pitch_note_axis",false));controller.recreate();activity=controller.get();root=activity.getWindow().getDecorView();assertTrue(type(root,PitchTraceView.class).isNoteAxis());chooseNotes(root,false);assertFalse(type(root,PitchTraceView.class).isNoteAxis());assertEquals(oldHeight,type(root,PitchTraceView.class).getLayoutParams().height);assertFalse(activity.getSharedPreferences("analysis_settings",0).getBoolean("pitch_note_axis",true));}
     @Test public void axisSwitchPreservesMeasuredSnapshot(){studio();PitchTraceView trace=type(root,PitchTraceView.class);LiveAnalysis.Snapshot snapshot=new LiveAnalysis.Snapshot(3,Collections.emptyList());trace.setSnapshot(snapshot);chooseNotes(root,true);assertSame(snapshot,org.robolectric.util.ReflectionHelpers.getField(trace,"snapshot"));chooseNotes(root,false);assertSame(snapshot,org.robolectric.util.ReflectionHelpers.getField(trace,"snapshot"));}

@@ -50,4 +50,38 @@ public class PageNavigationTest {
         assertEquals(OfflineAnalysisActivity.class.getName(),opened.getComponent().getClassName());
         assertEquals(row.uri,opened.getStringExtra("recording_uri"));
     }
+    @Test public void aboutShowsInstalledVersionAndRepositoryFromEveryPage() throws Exception {
+        android.content.pm.PackageInfo info=activity.getPackageManager().getPackageInfo(activity.getPackageName(),0);
+        String expectedVersion=activity.getString(R.string.about_version,info.versionName,info.getLongVersionCode());
+        for(String page:new String[]{"录音库","录音室","播放","预设"}){
+            navigate(page);
+            android.app.AlertDialog dialog=openAbout();
+            CharSequence message=Shadows.shadowOf(dialog).getMessage();
+            assertTrue(message.toString().contains(expectedVersion));
+            assertTrue(message.toString().contains("https://github.com/yoimiya-610/luyin2"));
+            dialog.dismiss();
+        }
+    }
+    @Test public void aboutCopiesRepositoryAndOpensItWithAndroid(){
+        String url="https://github.com/yoimiya-610/luyin2";
+        openAbout().getButton(android.app.AlertDialog.BUTTON_NEUTRAL).performClick();
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        android.content.ClipboardManager clipboard=activity.getSystemService(android.content.ClipboardManager.class);
+        android.content.ClipData copied=clipboard.getPrimaryClip();
+        assertNotNull(copied);
+        assertEquals(url,copied.getItemAt(0).getText());
+        openAbout().getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+        android.content.Intent opened=Shadows.shadowOf(activity).getNextStartedActivity();
+        assertNotNull(opened);
+        assertEquals(android.content.Intent.ACTION_VIEW,opened.getAction());
+        assertEquals(url,opened.getDataString());
+    }
+    private android.app.AlertDialog openAbout(){
+        description(root,"当前页面选项").performClick();
+        ListView menu=org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().getListView();
+        int last=menu.getCount()-1;
+        assertEquals("关于",menu.getAdapter().getItem(last));
+        menu.performItemClick(menu.getAdapter().getView(last,null,menu),last,last);
+        return org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog();
+    }
 }

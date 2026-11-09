@@ -24,6 +24,7 @@ import java.util.concurrent.*;
 @androidx.media3.common.util.UnstableApi
 public final class MainActivity extends Activity {
     private static final int LIBRARY=0,STUDIO=1,PLAYER=2,PRESETS=3;
+    private static final String PROJECT_URL="https://github.com/yoimiya-610/luyin2";
     private final int BG=0xfff5f7f4,INK=0xff193c33,TEAL=0xff21785c,MUTED=0xff64746a,FOREST=0xff153f34,MINT=0xffb4edc6;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Handler handler=new Handler(Looper.getMainLooper());
@@ -52,7 +53,7 @@ public final class MainActivity extends Activity {
     private PitchTraceView pitchTrace;
     private Button pitchAxisButton;
     private HarmonicsView harmonicsView;
-    private TextView pitchReadout,harmonicReadout,stabilityValues;
+    private TextView pitchReadout,harmonicReadout,pitchVariation,levelVariation,voicedRatio;
     private AlertDialog analysisDialog;
     private PianoDialog pianoDialog;
     private final View[] pages=new View[4];
@@ -91,6 +92,16 @@ public final class MainActivity extends Activity {
     private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
     private TextView text(String value,int size,int color){TextView v=new TextView(this);v.setText(value);v.setTextSize(size);v.setTextColor(color);v.setFontFeatureSettings("tnum");return v;}
     private TextView bold(String value,int size,int color){TextView v=text(value,size,color);v.setTypeface(null,Typeface.BOLD);return v;}
+    private static void setTextIfChanged(TextView view,CharSequence value){
+        if(!android.text.TextUtils.equals(view.getText(),value))view.setText(value);
+    }
+    private TextView readoutLine(TextView view){
+        view.setSingleLine(true);
+        view.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        // Switching between Latin digits, note names and Chinese must not change the line height.
+        view.setFallbackLineSpacing(false);
+        return view;
+    }
     private LinearLayout column(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);v.setClipChildren(false);v.setClipToPadding(false);return v;}
     private LinearLayout line(){LinearLayout v=new LinearLayout(this);v.setGravity(Gravity.CENTER_VERTICAL);v.setClipChildren(false);v.setClipToPadding(false);return v;}
     private GradientDrawable background(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
@@ -138,14 +149,26 @@ public final class MainActivity extends Activity {
         LinearLayout panel=column();pitchCard=column();harmonicCard=column();stabilityCard=column();
         for(LinearLayout card:new LinearLayout[]{pitchCard,harmonicCard,stabilityCard}){surface(card,Color.WHITE,20);card.setPadding(dp(16),dp(14),dp(16),dp(12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(12);panel.addView(card,p);}
         LinearLayout pitchHeading=line();pitchHeading.addView(bold("音高轨迹",14,INK),new LinearLayout.LayoutParams(0,-2,1));pitchAxisButton=button(notePitchAxis()?"坐标：音名":"坐标：Hz",this::choosePitchAxis);pitchAxisButton.setContentDescription("切换音高轨迹坐标");pitchHeading.addView(pitchAxisButton);pitchCard.addView(pitchHeading);pitchTrace=new PitchTraceView(this);pitchTrace.setNoteAxis(notePitchAxis());pitchCard.addView(pitchTrace,new LinearLayout.LayoutParams(-1,dp(notePitchAxis()?280:108)));
-        harmonicCard.addView(bold("泛音幅度 · 相对基频 dB",14,INK));harmonicReadout=text("—",12,MUTED);harmonicCard.addView(harmonicReadout);harmonicsView=new HarmonicsView(this);harmonicCard.addView(harmonicsView,new LinearLayout.LayoutParams(-1,dp(132)));
-        stabilityCard.addView(bold("声音稳定性 · 最近 5 秒",14,INK));gap(stabilityCard,8);stabilityValues=text("—",14,INK);stabilityValues.setLineSpacing(dp(6),1);stabilityCard.addView(stabilityValues);return panel;
+        harmonicCard.addView(bold("泛音幅度 · 相对基频 dB",14,INK));harmonicReadout=readoutLine(text("—",12,MUTED));harmonicCard.addView(harmonicReadout,new LinearLayout.LayoutParams(-1,-2));harmonicsView=new HarmonicsView(this);harmonicCard.addView(harmonicsView,new LinearLayout.LayoutParams(-1,dp(132)));
+        stabilityCard.addView(bold("声音稳定性 · 最近 5 秒",14,INK));gap(stabilityCard,8);
+        pitchVariation=stabilityRow("音高波动");gap(stabilityCard,4);
+        levelVariation=stabilityRow("非静音响度波动");gap(stabilityCard,4);
+        voicedRatio=stabilityRow("有效音高");
+        return panel;
+    }
+    private TextView stabilityRow(String label){
+        LinearLayout row=line();row.setBaselineAligned(false);
+        row.addView(text(label,14,INK),new LinearLayout.LayoutParams(0,-2,3));
+        TextView value=readoutLine(text("—",14,INK));value.setGravity(Gravity.END|Gravity.CENTER_VERTICAL);
+        row.addView(value,new LinearLayout.LayoutParams(0,-2,2));
+        stabilityCard.addView(row,new LinearLayout.LayoutParams(-1,-2));
+        return value;
     }
     private View buildStudioPage(){
         if(landscape())return buildLandscapeStudio();
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);LinearLayout body=padded();body.setPadding(dp(20),dp(4),dp(20),dp(24));scroll.addView(body);
         LinearLayout hero=column();hero.setPadding(dp(16),dp(12),dp(16),dp(14));surface(hero,FOREST,26);LinearLayout phaseRow=line();studioPhase=text("准备就绪",12,MINT);phaseRow.addView(studioPhase,new LinearLayout.LayoutParams(0,-2,1));phaseRow.addView(button("横屏",this::enterLandscape));hero.addView(phaseRow);
-        studioTimer=bold("00:00",34,Color.WHITE);studioTimer.setGravity(Gravity.CENTER);hero.addView(studioTimer);studioName=text("未录音",12,0xffa7c5b6);studioName.setGravity(Gravity.CENTER);hero.addView(studioName);pitchReadout=bold("— Hz",18,MINT);pitchReadout.setGravity(Gravity.CENTER);hero.addView(pitchReadout);gap(hero,8);
+        studioTimer=bold("00:00",34,Color.WHITE);studioTimer.setGravity(Gravity.CENTER);hero.addView(studioTimer,new LinearLayout.LayoutParams(-1,-2));studioName=text("未录音",12,0xffa7c5b6);studioName.setGravity(Gravity.CENTER);hero.addView(studioName);pitchReadout=readoutLine(bold("— Hz",18,MINT));pitchReadout.setGravity(Gravity.CENTER);hero.addView(pitchReadout,new LinearLayout.LayoutParams(-1,-2));gap(hero,8);
         hero.addView(graph(),new LinearLayout.LayoutParams(-1,dp(156)));gap(hero,6);hero.addView(displayModes());body.addView(hero);
         gap(body,10);LinearLayout formatRow=line();formatRow.addView(text("录音格式",13,INK),new LinearLayout.LayoutParams(0,-2,1));formatButton=button(CaptureFormat.M4A.label,this::chooseCaptureFormat);formatRow.addView(formatButton);body.addView(formatRow);gap(body,8);
         LinearLayout stats=line();studioCount=bold("0 段已保存",14,INK);studioTotal=text("累计 00:00",13,MUTED);stats.addView(studioCount,new LinearLayout.LayoutParams(0,-2,1));stats.addView(studioTotal);body.addView(stats);
@@ -156,7 +179,7 @@ public final class MainActivity extends Activity {
     }
     private View buildLandscapeStudio(){
         LinearLayout body=column();body.setPadding(dp(8),dp(4),dp(8),dp(4));body.setBackgroundColor(FOREST);
-        LinearLayout top=line();studioPhase=text("准备就绪",11,MINT);top.addView(studioPhase,new LinearLayout.LayoutParams(0,dp(40),1));pitchReadout=bold("— Hz",18,Color.WHITE);pitchReadout.setGravity(Gravity.CENTER);top.addView(pitchReadout,new LinearLayout.LayoutParams(0,dp(40),2));studioTimer=bold("00:00",18,Color.WHITE);studioTimer.setPadding(dp(8),0,dp(8),0);top.addView(studioTimer);top.addView(button("竖屏",()->setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT)));body.addView(top);
+        LinearLayout top=line();studioPhase=text("准备就绪",11,MINT);top.addView(studioPhase,new LinearLayout.LayoutParams(0,dp(40),1));pitchReadout=readoutLine(bold("— Hz",18,Color.WHITE));pitchReadout.setGravity(Gravity.CENTER);top.addView(pitchReadout,new LinearLayout.LayoutParams(0,dp(40),2));studioTimer=bold("00:00",18,Color.WHITE);studioTimer.setPadding(dp(8),0,dp(8),0);top.addView(studioTimer);top.addView(button("竖屏",()->setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT)));body.addView(top);
         body.addView(graph(),new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout modes=line();waveModeButton=button("波形",()->setAnalysisDisplay("wave"));spectrumModeButton=button("声谱图",()->setAnalysisDisplay("spectrum"));for(Button b:new Button[]{waveModeButton,spectrumModeButton}){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(86),dp(48));p.rightMargin=dp(5);modes.addView(b,p);}modes.addView(button("分析",this::showAnalysisSettings));modes.addView(button("数据",this::showAnalysisPanel));modes.addView(button("钢琴",this::showPiano));modes.addView(button("文件",()->showPage(LIBRARY)));body.addView(modes);
         LinearLayout controls=line();captureToggle=primary("录音",this::toggleCapture);captureFinish=button("结束",this::confirmFinish);formatButton=button(CaptureFormat.M4A.label,this::chooseCaptureFormat);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(dp(120),dp(48));p.rightMargin=dp(6);controls.addView(captureToggle,p);controls.addView(captureFinish,new LinearLayout.LayoutParams(dp(80),dp(48)));LinearLayout.LayoutParams f=new LinearLayout.LayoutParams(dp(110),dp(48));f.leftMargin=dp(6);controls.addView(formatButton,f);trialToggle=button("试音",this::toggleTrial);LinearLayout.LayoutParams trialP=new LinearLayout.LayoutParams(dp(106),dp(48));trialP.leftMargin=dp(6);controls.addView(trialToggle,trialP);studioCount=text("0 段已保存",12,MINT);studioCount.setPadding(dp(12),0,0,0);controls.addView(studioCount,new LinearLayout.LayoutParams(0,dp(48),1));body.addView(controls);
@@ -181,9 +204,12 @@ public final class MainActivity extends Activity {
         if(page!=STUDIO||spectrumView==null)return;boolean pitch=analysisOption("pitch"),harmonics=analysisOption("harmonics"),stability=analysisOption("stability"),spectrum=getSharedPreferences("analysis_settings",0).getString("display","wave").equals("spectrum");
         waveformView.setVisibility(spectrum?View.GONE:View.VISIBLE);spectrumView.setVisibility(spectrum?View.VISIBLE:View.GONE);for(Button b:new Button[]{waveModeButton,spectrumModeButton}){boolean selected=b==spectrumModeButton?spectrum:!spectrum;if(b.getTag()==null||b.isSelected()!=selected){b.setTag(Boolean.TRUE);b.setSelected(selected);b.setTextColor(selected?FOREST:MINT);b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33ffffff),background(selected?MINT:0xff285343,14),null));}}
         LiveAnalysis.Snapshot data=trial.hasSession()?trial.snapshot():CaptureService.analysisSnapshot();boolean recording=trial.running()||recordingForGraph;int flags=(pitch?1:0)|(harmonics?2:0)|(stability?4:0)|(spectrum?8:0)|(recording?16:0);if(data==displayedAnalysis&&flags==displayedAnalysisFlags)return;displayedAnalysis=data;displayedAnalysisFlags=flags;SoundFrame f=data.latest();if(recording&&f!=null&&f.segment!=data.segment)f=null;
-        if(spectrum)spectrumView.setSnapshot(data,pitch);pitchReadout.setVisibility(pitch?View.VISIBLE:View.GONE);pitchReadout.setText(f!=null&&f.pitchHz>0?String.format(Locale.ROOT,"%.1f Hz  %s  %+.0f 音分",f.pitchHz,PitchDetector.note(f.pitchHz),PitchDetector.noteCents(f.pitchHz)):"— Hz");
-        pitchCard.setVisibility(pitch?View.VISIBLE:View.GONE);harmonicCard.setVisibility(harmonics?View.VISIBLE:View.GONE);stabilityCard.setVisibility(stability?View.VISIBLE:View.GONE);pitchTrace.setSnapshot(data);harmonicsView.setFrame(f);harmonicReadout.setText(f!=null&&f.pitchHz>0?String.format(Locale.ROOT,"H1 %.1f Hz",f.pitchHz):"—");
-        StabilityMetrics m=f==null?null:f.stability;stabilityValues.setText("音高波动  "+metric(m==null?Double.NaN:m.pitchStdCents,"音分")+"\n非静音响度波动  "+metric(m==null?Double.NaN:m.levelStdDb,"dB")+"\n有效音高  "+(m!=null&&m.frames>=8?String.format(Locale.ROOT,"%.0f%%",m.voicedFraction*100):"—"));
+        if(spectrum)spectrumView.setSnapshot(data,pitch);pitchReadout.setVisibility(pitch?View.VISIBLE:View.GONE);setTextIfChanged(pitchReadout,f!=null&&f.pitchHz>0?String.format(Locale.ROOT,"%.1f Hz  %s  %+.0f 音分",f.pitchHz,PitchDetector.note(f.pitchHz),PitchDetector.noteCents(f.pitchHz)):"— Hz");
+        pitchCard.setVisibility(pitch?View.VISIBLE:View.GONE);harmonicCard.setVisibility(harmonics?View.VISIBLE:View.GONE);stabilityCard.setVisibility(stability?View.VISIBLE:View.GONE);pitchTrace.setSnapshot(data);harmonicsView.setFrame(f);setTextIfChanged(harmonicReadout,f!=null&&f.pitchHz>0?String.format(Locale.ROOT,"H1 %.1f Hz",f.pitchHz):"—");
+        StabilityMetrics m=f==null?null:f.stability;
+        setTextIfChanged(pitchVariation,metric(m==null?Double.NaN:m.pitchStdCents,"音分"));
+        setTextIfChanged(levelVariation,metric(m==null?Double.NaN:m.levelStdDb,"dB"));
+        setTextIfChanged(voicedRatio,m!=null&&m.frames>=8?String.format(Locale.ROOT,"%.0f%%",m.voicedFraction*100):"—");
     }
     private String metric(double value,String unit){return Double.isFinite(value)?String.format(Locale.ROOT,"%.1f %s",value,unit):"—";}
     private View buildPlayerPage(){
@@ -202,8 +228,37 @@ public final class MainActivity extends Activity {
     }
     private void showPage(int target){if(target!=STUDIO&&trial!=null)trial.stop();page=Math.max(LIBRARY,Math.min(PRESETS,target));queueView=page==PLAYER;if(page!=LIBRARY){search.clearFocus();android.view.inputmethod.InputMethodManager keyboard=(android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);if(keyboard!=null)keyboard.hideSoftInputFromWindow(search.getWindowToken(),0);}configureAnalysis();handler.removeCallbacks(analysisTicker);if(foreground&&page==STUDIO)handler.post(analysisTicker);render();if(page==STUDIO)updateCapture();}
     private void pageMenu(){
-        if(page==LIBRARY)new AlertDialog.Builder(this).setTitle("录音库").setItems(new String[]{"扫描本地录音","授权录音文件夹","导入音频","选择与排序","管理文件夹","恢复移出软件的录音","使用帮助"},(d,w)->{if(w==0)requestScan();else if(w==1)chooseTree();else if(w==2)chooseFiles();else if(w==3)showActions();else if(w==4)manageFolders();else if(w==5){library.restoreHidden();scan();}else help();}).show();
-        else if(page==PLAYER)showActions();else if(page==PRESETS)new AlertDialog.Builder(this).setItems(new String[]{"保存当前播放队列","使用帮助"},(d,w)->{if(w==0)saveQueuePreset();else help();}).show();else new AlertDialog.Builder(this).setItems(new String[]{"录音格式","使用帮助"},(d,w)->{if(w==0)chooseCaptureFormat();else help();}).show();
+        if(page==LIBRARY)new AlertDialog.Builder(this).setTitle("录音库").setItems(new String[]{"扫描本地录音","授权录音文件夹","导入音频","选择与排序","管理文件夹","恢复移出软件的录音","使用帮助","关于"},(d,w)->{if(w==0)requestScan();else if(w==1)chooseTree();else if(w==2)chooseFiles();else if(w==3)showActions();else if(w==4)manageFolders();else if(w==5){library.restoreHidden();scan();}else if(w==6)help();else about();}).show();
+        else if(page==PLAYER)showActions();
+        else{
+            boolean presets=page==PRESETS;
+            new AlertDialog.Builder(this).setItems(new String[]{presets?"保存当前播放队列":"录音格式","使用帮助","关于"},(d,w)->{
+                if(w==0){if(presets)saveQueuePreset();else chooseCaptureFormat();}
+                else if(w==1)help();else about();
+            }).show();
+        }
+    }
+
+    private void about(){
+        String version=getString(R.string.about_version_unknown);
+        try{
+            android.content.pm.PackageInfo info=getPackageManager().getPackageInfo(getPackageName(),0);
+            if(info.versionName!=null)version=getString(R.string.about_version,info.versionName,info.getLongVersionCode());
+        }catch(PackageManager.NameNotFoundException ignored){}
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(R.string.about_title)
+                .setMessage(getString(R.string.about_details,version,PROJECT_URL))
+                .setPositiveButton(R.string.about_open_github,null)
+                .setNeutralButton(R.string.about_copy_url,(d,w)->{
+                    ClipboardManager clipboard=getSystemService(ClipboardManager.class);
+                    clipboard.setPrimaryClip(ClipData.newPlainText("GitHub",PROJECT_URL));
+                    if(Build.VERSION.SDK_INT<33)toast(getString(R.string.about_url_copied));
+                }).setNegativeButton("关闭",null).show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(PROJECT_URL)));
+                dialog.dismiss();
+            }catch(ActivityNotFoundException e){toast(getString(R.string.about_no_browser));}
+        });
     }
 
     private void connect(){
@@ -214,9 +269,12 @@ public final class MainActivity extends Activity {
         });updatePlayer();}catch(Exception e){toast("播放器连接失败，请重开应用");}},getMainExecutor());
     }
     private void updatePlayer(){if(player==null||destroyed)return;
-        MediaItem item=player.getCurrentMediaItem();now.setText(item==null?"未播放":item.mediaMetadata.title);
-        play.setText(player.isPlaying()?"暂停":"播放");miniPlay.setText(player.isPlaying()?"暂停":"播放");miniTitle.setText(item==null?"未播放":item.mediaMetadata.title);miniSubtitle.setText(item==null?"":player.isPlaying()?"播放中":"已暂停");repeat.setText(player.getRepeatMode()==Player.REPEAT_MODE_ONE?"单曲循环":player.getShuffleModeEnabled()?"乱序播放":"顺序播放");
-        long duration=Math.max(0,player.getDuration()),position=Math.max(0,player.getCurrentPosition());clock.setText(time(position)+" / "+time(duration));
+        MediaItem item=player.getCurrentMediaItem();CharSequence title=item==null?"未播放":item.mediaMetadata.title;
+        boolean playing=player.isPlaying();String action=playing?"暂停":"播放";
+        setTextIfChanged(now,title);setTextIfChanged(miniTitle,title);setTextIfChanged(play,action);setTextIfChanged(miniPlay,action);
+        setTextIfChanged(miniSubtitle,item==null?"":playing?"播放中":"已暂停");
+        setTextIfChanged(repeat,player.getRepeatMode()==Player.REPEAT_MODE_ONE?"单曲循环":player.getShuffleModeEnabled()?"乱序播放":"顺序播放");
+        long duration=Math.max(0,player.getDuration()),position=Math.max(0,player.getCurrentPosition());setTextIfChanged(clock,time(position)+" / "+time(duration));
         seek.setEnabled(duration>0);if(!dragging)seek.setProgress(duration>0?(int)(position*1000/duration):0);
     }
     private static String time(long ms){long s=Math.max(0,ms/1000);return s>=3600?String.format(Locale.ROOT,"%d:%02d:%02d",s/3600,s/60%60,s%60):String.format(Locale.ROOT,"%02d:%02d",s/60,s%60);}
@@ -273,7 +331,7 @@ public final class MainActivity extends Activity {
 
     private List<Recording> selectedRows(){List<Recording> chosen=new ArrayList<>();for(String uri:selected)for(Recording r:catalog)if(uri.equals(r.uri)){chosen.add(r);break;}return chosen;}
     private void showActions(){
-        if(page==PLAYER){new AlertDialog.Builder(this).setTitle("播放队列 · "+queue.size()+" 段").setItems(new String[]{"从第一首开始播放","播放模式","保存为预设","导出整个队列","清空队列","使用帮助"},(d,w)->{if(w==0)applyQueue(0,true);else if(w==1)choosePlaybackMode();else if(w==2)saveQueuePreset();else if(w==3)beginExport(queue);else if(w==4)new AlertDialog.Builder(this).setMessage("清空播放队列？音频文件会保留。").setPositiveButton("清空",(a,b)->{queue.clear();library.save("queue",queue);if(player!=null)player.clearMediaItems();render();}).setNegativeButton("取消",null).show();else help();}).show();return;}
+        if(page==PLAYER){new AlertDialog.Builder(this).setTitle("播放队列 · "+queue.size()+" 段").setItems(new String[]{"从第一首开始播放","播放模式","保存为预设","导出整个队列","清空队列","使用帮助","关于"},(d,w)->{if(w==0)applyQueue(0,true);else if(w==1)choosePlaybackMode();else if(w==2)saveQueuePreset();else if(w==3)beginExport(queue);else if(w==4)new AlertDialog.Builder(this).setMessage("清空播放队列？音频文件会保留。").setPositiveButton("清空",(a,b)->{queue.clear();library.save("queue",queue);if(player!=null)player.clearMediaItems();render();}).setNegativeButton("取消",null).show();else if(w==5)help();else about();}).show();return;}
         new AlertDialog.Builder(this).setTitle("录音操作").setItems(new String[]{"将所选加入队尾","用所选替换队列并播放","移动所选到文件夹","导出所选录音","删除所选录音","选择当前筛选全部","取消全部选择","按名称排序","按时间排序"},(d,w)->{
             if(w<=1){if(player==null){toast("播放器正在连接");return;}List<Recording> chosen=selectedRows();if(chosen.isEmpty()){toast("请先勾选录音");return;}if(w==1&&!canPlay())return;
                 if(w==1){queue.clear();queue.addAll(chosen);applyQueue(0,true);}else{queue.addAll(chosen);library.save("queue",queue);List<MediaItem> items=new ArrayList<>();for(Recording r:chosen)items.add(r.item());player.addMediaItems(items);}selected.clear();showPage(PLAYER);
@@ -446,13 +504,25 @@ public final class MainActivity extends Activity {
     private void updateCapture(){
         CaptureJournal s=CaptureJournal.read(this);boolean active=CaptureService.running&&s!=null&&!s.state.equals("finished"),recording=active&&s.active!=null;long current=recording?Math.max(0,SystemClock.elapsedRealtime()-s.activeSince):0;
         recordingForGraph=recording;
-        studioPhase.setText(recording?"● 正在录音":active?"Ⅱ 已暂停":s!=null&&!s.rows.isEmpty()?"本次已结束":"准备就绪");studioPhase.setTextColor(recording?0xffd3f3bb:MINT);studioTimer.setText(time(recording?current:s==null?0:s.total));studioName.setText(recording?s.active.name:active?"累计有效录音时长":s!=null&&!s.rows.isEmpty()?"本次录音累计时长":"未录音");
-        navLabels[STUDIO].setText(recording?"录音中":"录音室");navIcons[STUDIO].setColor(recording?0xffbc5947:page==STUDIO?TEAL:MUTED);
-        studioCount.setText((s==null?0:s.rows.size())+" 段已保存");studioTotal.setText("累计 "+time((s==null?0:s.total)+current));
-        String summary=s==null?"":active?"":s.message;
-        captureSummary.setText(summary);captureSummary.setVisibility(summary.isEmpty()?View.GONE:View.VISIBLE);String detail=active&&!s.message.isEmpty()&&!s.message.equals("片段已保存，点击继续录音开始下一段")?s.message:"";captureDetail.setText(detail);captureDetail.setVisibility(detail.isEmpty()?View.GONE:View.VISIBLE);formatButton.setEnabled(!active);formatButton.setText((active?s.format:CaptureFormat.from(getSharedPreferences("capture_settings",0).getString("format","M4A"))).label);captureToggle.setText(landscape()?(recording?"暂停":active?"继续":"录音"):(recording?"Ⅱ  暂停并保存片段":active?"●  继续录制下一段":"●  开始长录音"));captureFinish.setEnabled(active);captureFinish.setAlpha(active?1f:.45f);
-        trialToggle.setText(trial.running()?"停止试音":landscape()?"试音":"开始试音");trialToggle.setEnabled(!active&&!CaptureService.running);captureToggle.setEnabled(!trial.running());
-        if(trial.hasSession()&&!active){studioPhase.setText(trial.running()?"● 试音中 · 不保存":"试音已停止");studioTimer.setText(time(trial.duration()));studioName.setText("不保存音频");captureSummary.setText(trial.message());captureSummary.setVisibility(trial.message().isEmpty()?View.GONE:View.VISIBLE);formatButton.setEnabled(!trial.running());}
+        boolean showTrial=trial.hasSession()&&!active,trialRunning=trial.running();
+        boolean savedClips=s!=null&&!s.rows.isEmpty();
+        String phase=recording?"● 正在录音":active?"Ⅱ 已暂停":savedClips?"本次已结束":"准备就绪";
+        String name=recording?s.active.name:active?"累计有效录音时长":savedClips?"本次录音累计时长":"未录音";
+        String summary=showTrial?trial.message():s==null||active?"":s.message;
+        setTextIfChanged(studioPhase,showTrial?(trialRunning?"● 试音中 · 不保存":"试音已停止"):phase);
+        studioPhase.setTextColor(recording?0xffd3f3bb:MINT);
+        setTextIfChanged(studioTimer,time(showTrial?trial.duration():recording?current:s==null?0:s.total));
+        setTextIfChanged(studioName,showTrial?"不保存音频":name);
+        setTextIfChanged(navLabels[STUDIO],recording?"录音中":"录音室");navIcons[STUDIO].setColor(recording?0xffbc5947:page==STUDIO?TEAL:MUTED);
+        setTextIfChanged(studioCount,(s==null?0:s.rows.size())+" 段已保存");setTextIfChanged(studioTotal,"累计 "+time((s==null?0:s.total)+current));
+        setTextIfChanged(captureSummary,summary);captureSummary.setVisibility(summary.isEmpty()?View.GONE:View.VISIBLE);
+        String detail=active&&!s.message.isEmpty()&&!s.message.equals("片段已保存，点击继续录音开始下一段")?s.message:"";
+        setTextIfChanged(captureDetail,detail);captureDetail.setVisibility(detail.isEmpty()?View.GONE:View.VISIBLE);
+        formatButton.setEnabled(!active&&(!showTrial||!trialRunning));
+        setTextIfChanged(formatButton,(active?s.format:CaptureFormat.from(getSharedPreferences("capture_settings",0).getString("format","M4A"))).label);
+        setTextIfChanged(captureToggle,landscape()?(recording?"暂停":active?"继续":"录音"):(recording?"Ⅱ  暂停并保存片段":active?"●  继续录制下一段":"●  开始长录音"));
+        captureFinish.setEnabled(active);captureFinish.setAlpha(active?1f:.45f);
+        setTextIfChanged(trialToggle,trialRunning?"停止试音":landscape()?"试音":"开始试音");trialToggle.setEnabled(!active&&!CaptureService.running);captureToggle.setEnabled(!trialRunning);
         if(page==STUDIO)waveformView.setSamples(trial.hasSession()?trial.waveform():CaptureService.waveformSamples(),trial.hasSession()?trial.running():recording);
         String fingerprint=s==null?"":s.id+":"+s.rows.size()+":"+s.state;
         if(!fingerprint.equals(studioFingerprint)){studioFingerprint=fingerprint;studioClips.removeAllViews();if(s==null||s.rows.isEmpty()){TextView empty=text("暂无片段",12,MUTED);empty.setPadding(0,dp(8),0,dp(16));studioClips.addView(empty);}else{for(int i=Math.max(0,s.rows.size()-6);i<s.rows.size();i++)studioClips.addView(recordingRow(library.resolve(Recording.from(s.rows.get(i).json())),i,false,true));if(s.rows.size()>6)studioClips.addView(button("查看全部本机录音",()->{category=SourceRules.APP;showPage(LIBRARY);}));}}
