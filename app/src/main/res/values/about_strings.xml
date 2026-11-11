@@ -2,9 +2,9 @@
     <string name="about_title">关于录音随听</string>
     <string name="about_version">版本 %1$s（%2$d）</string>
     <string name="about_version_unknown">版本未知</string>
-    <string name="about_details">%1$s\n\nGitHub 仓库\n%2$s\n\n支持 Android 10 及以上。\n录音、播放和声音分析均在手机上完成。</string>
+    <string name="about_details">%1$s\n\n%2$s</string>
     <string name="about_open_github">打开 GitHub</string>
     <string name="about_copy_url">复制地址</string>
     <string name="about_url_copied">已复制 GitHub 地址</string>
-    <string name="about_no_browser">无法打开 GitHub，请复制地址后在浏览器中打开。</string>
+    <string name="about_no_browser">未找到浏览器。</string>
 </resources>

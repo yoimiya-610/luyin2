@@ -253,12 +253,14 @@ public final class MainActivity extends Activity {
                     clipboard.setPrimaryClip(ClipData.newPlainText("GitHub",PROJECT_URL));
                     if(Build.VERSION.SDK_INT<33)toast(getString(R.string.about_url_copied));
                 }).setNegativeButton("关闭",null).show();
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-            try{
-                startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(PROJECT_URL)));
-                dialog.dismiss();
-            }catch(ActivityNotFoundException e){toast(getString(R.string.about_no_browser));}
-        });
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->openProject(dialog));
+    }
+
+    private void openProject(AlertDialog dialog){
+        try{
+            startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(PROJECT_URL)));
+            dialog.dismiss();
+        }catch(ActivityNotFoundException e){toast(getString(R.string.about_no_browser));}
     }
 
     private void connect(){
@@ -530,8 +532,13 @@ public final class MainActivity extends Activity {
     }
 
 
-    private void help(){new AlertDialog.Builder(this).setTitle("使用帮助").setMessage("录音库：按来源、文件夹和名称筛选。勾选后可批量加入队列、移动分类、导出或删除；右上角可全选当前筛选结果。\n\n文件夹：软件内分类，不改变原文件位置。可新建、重命名，删除文件夹会把录音退回未分类。\n\n删除：删除文件不可恢复，会清理播放队列和预设引用；导入录音只删除软件内副本。系统录音需安卓确认。仅移出软件会保留文件，可从录音库右上角恢复。\n\n录音格式：开始前可选 M4A/AAC、AAC、AMR 或 WAV。M4A/AAC 和 AAC 适合普通语音；AMR 为小体积窄带语音；WAV 为无损 PCM16，储存占用较大。同一次长录音保持相同格式。\n\n试音：录音室点击开始试音，只显示真实麦克风的波形、声谱图与分析，不保存音频、不占用日期编号、不创建预设。可随时停止，停止后保留最后一屏；重新开始会清空历史。离开录音室或切到后台自动停止，旋转屏幕保持试音。试音只需麦克风权限，不能与长录音同时进行。\n\n长录音：暂停保存一段，继续新建下一段；日期编号按当天递增。结束自动生成整组预设。波形取自真实麦克风振幅；可切换声谱图（时间/频率/dBFS），横屏扩大图表，数据按钮查看分析。熄屏、旋转或切换页面不停止录音。\n\n分析设置：音高为 YIN 单音追踪，40–1800 Hz，A4=440 Hz；音高轨迹标题旁的坐标按钮可切换 Hz 与科学音高记谱（A4、C5 等），选择会保存，试音和长录音共用。音名坐标使用十二平均律，淡线为半音间隔，轨迹仍显示连续音高与跑调，不量化到琴键。低电平或周期性不足显示 —，不支持和弦分离。泛音 H1–H8 显示相对基频的幅度 dB，超出频段留空。稳定性统计同一连续片段最近 5 秒的音高标准差（音分）、非静音帧（高于 −60 dBFS）的 RMS 电平标准差（dB）和有效音高比例；不足 8 帧时留空。换音、颤音、渐强都会增加波动，不作医学或音质评分。实时图谱仅保留在内存，暂停冻结，新会话清空。\n\n离线分析：在单段已保存录音的更多菜单打开。顶部定位条和上一窗、下一窗用于切换最多 12 秒的时间窗。可切换声谱图、波形，拖动窗内游标查看该位置的音高、泛音和当前窗内往前最多 5 秒的稳定性。音高轨迹可切换 Hz 或科学音高记谱。离线分析在手机上以只读方式打开录音。\n\n钢琴：双八度多指键盘，支持滑键、切换八度及调节音量，16 声部本地合成音色。关闭、切后台或失去音频焦点后停止发声。录音时可弹奏参考音，扬声器声音也会被录入，耳机可减少串音。\n\n播放：可选顺序、乱序或单曲循环。乱序不改动已保存的队列顺序。片段更多菜单可上移、下移或移出队列。\n\n导出：单段保持原音频格式，多段按当前顺序编号后打包为 ZIP，再选择保存位置。\n\n兼容范围：Android 10 及以上，不限制手机品牌；不支持安卓 APK 的系统不适用。系统录音机私有目录无法读取时，请从录音机分享导入，或授权共享录音文件夹。部分系统不提供录音来源信息，可手动修正来源。不同品牌后台省电策略和音频硬件存在差异，后台被终止时请在系统设置允许后台运行、关闭本应用电池优化（菜单名称因品牌而异）。").setPositiveButton("关闭",null).show();}
-
+    private void help(){
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(R.string.help_title)
+                .setMessage(R.string.help_details)
+                .setPositiveButton(R.string.help_full_guide,null)
+                .setNegativeButton("关闭",null).show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->openProject(dialog));
+    }
     private void toast(String message){Toast.makeText(this,message,Toast.LENGTH_LONG).show();}
     @Override protected void onResume(){super.onResume();foreground=true;refreshPitchAxis();configureAnalysis();if(pendingTrialStart)startTrial();if(library!=null&&!scanning)scan();handler.removeCallbacks(ticker);handler.post(ticker);handler.removeCallbacks(analysisTicker);handler.post(analysisTicker);try{getContentResolver().registerContentObserver(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,true,observer);}catch(SecurityException ignored){}}
     @Override protected void onPause(){foreground=false;if(!isChangingConfigurations())configureAnalysis();if(trial!=null&&!isChangingConfigurations())trial.stop();if(pianoDialog!=null)pianoDialog.dismiss();if(analysisDialog!=null)analysisDialog.dismiss();getContentResolver().unregisterContentObserver(observer);handler.removeCallbacks(refresh);handler.removeCallbacks(ticker);handler.removeCallbacks(analysisTicker);super.onPause();}

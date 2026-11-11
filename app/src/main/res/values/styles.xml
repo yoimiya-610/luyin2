@@ -8,5 +8,10 @@
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/AppDialogTheme</item>
+    </style>
+    <style name="AppDialogTheme" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#197568</item>
+        <item name="android:listDividerAlertDialog">@drawable/dialog_option_divider</item>
     </style>
 </resources>

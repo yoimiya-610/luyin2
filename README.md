@@ -4,9 +4,9 @@
 
 支持 **Android 10 及以上**，不限红米或其他手机品牌。音频在本机处理，应用不上传录音。
 
-**当前版本：1.6.2** · [下载安卓安装包](https://github.com/yoimiya-610/luyin2/raw/refs/heads/main/output/%E5%BD%95%E9%9F%B3%E9%9A%8F%E5%90%AC.apk)
+**当前版本：1.6.3** · [下载安卓安装包](https://github.com/yoimiya-610/luyin2/raw/refs/heads/main/output/%E5%BD%95%E9%9F%B3%E9%9A%8F%E5%90%AC.apk)
 
-在应用右上角点 **⋮ → 关于**，可以查看当前安装的版本，也可以打开或复制 GitHub 仓库地址。
+在应用右上角点 **⋮ → 关于**，可以查看版本、打开或复制 GitHub 仓库地址。**使用帮助**提供简明操作，点击 **完整说明**可查看本页。
 
 ## 安装后，从这里开始
 
